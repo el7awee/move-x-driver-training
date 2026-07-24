@@ -51,6 +51,11 @@ export async function getIdentityService() {
   );
 }
 
+export async function isStagingValidationEnabled() {
+  const { env } = await import("cloudflare:workers");
+  return env.IDENTITY_STAGING_VALIDATION === "true";
+}
+
 export async function getCurrentIdentity(request: Request) {
   const service = await getIdentityService();
   const context = await service.restoreSession(readCookie(request, SESSION_COOKIE));

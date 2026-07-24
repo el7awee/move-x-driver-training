@@ -18,6 +18,10 @@ test("production build includes login and current-session API routes", async () 
   assert.equal(manifest["/page"], "app/page.js");
   assert.equal(manifest["/api/auth/login/route"], "app/api/auth/login/route.js");
   assert.equal(manifest["/api/auth/me/route"], "app/api/auth/me/route.js");
+  assert.equal(
+    manifest["/api/auth/staging-authorization-check/route"],
+    "app/api/auth/staging-authorization-check/route.js",
+  );
 });
 
 test("production build keeps identity preview controls disabled", async () => {

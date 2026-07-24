@@ -47,11 +47,37 @@ role.
 
 ## Retention guidance
 
-- Delete revoked or expired sessions after 30 days; retain only the minimum
-  period required for incident review.
-- Delete login-attempt rows after 30 days. The 15-minute throttling window does
-  not require longer online retention.
-- Define a separate approved retention period for audit logs before production;
-  audit deletion must be controlled and documented.
+- Proposed, not activated: delete failed login attempts after 30 days.
+- Proposed, not activated: delete revoked or expired sessions after 30 days.
+- Proposed, not activated: retain successful authentication audit records for
+  365 days.
+- Proposed, not activated: retain blocked, failed, and security audit records
+  for 730 days.
+- Biometric verification retention remains undecided until the biometric and
+  privacy policies are approved.
 - Run cleanup as a bounded scheduled job using the retention indexes. Cleanup
   automation and production scheduling are outside this pull request.
+
+## Isolated staging
+
+`wrangler.jsonc` is deliberately staging-only: both its root name and
+`env.staging.name` target `move-x-driver-training-staging`. It contains only the
+non-secret staging D1 identifier and keeps `DB` as the application binding.
+There are no production resource IDs, routes, or custom domains in the file.
+
+Use only the explicit staging commands:
+
+```text
+npx vinext build
+npx vinext deploy --env staging
+npm run identity:bootstrap
+```
+
+Set `BOOTSTRAP_TARGET=staging`,
+`BOOTSTRAP_D1_DATABASE=move-x-driver-training-staging`, and the documented
+staging confirmation only for the bootstrap process. Store
+`AUTH_IP_HASH_KEY` with `wrangler secret put --env staging`; never place it in
+an environment file or committed configuration. Identity preview stays false.
+The staging authorization-check route exists only while
+`IDENTITY_STAGING_VALIDATION=true`; remove that variable and route before any
+production release.
