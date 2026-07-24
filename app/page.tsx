@@ -108,12 +108,25 @@ function Logo() {
 export default function Home() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [role, setRole] = useState<"driver" | "admin">("driver");
+  const [displayName, setDisplayName] = useState("محمد");
   const [view, setView] = useState<View>("home");
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    const savedTheme = window.localStorage.getItem("movex-theme") as Theme | null;
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+    const cairoHour = Number(
+      new Intl.DateTimeFormat("en-GB", {hour:"2-digit", hour12:false, timeZone:"Africa/Cairo"}).format(new Date())
+    );
+    return cairoHour >= 18 || cairoHour < 6 ? "dark" : "light";
+  });
   const [lang, setLang] = useState<Lang>("ar");
-  const [phone, setPhone] = useState("");
+  const [loginCode, setLoginCode] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [watchProgress, setWatchProgress] = useState(60);
   const [playing, setPlaying] = useState(false);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -121,17 +134,6 @@ export default function Home() {
   const [quizFinished, setQuizFinished] = useState(false);
   const [toast, setToast] = useState("");
   const t = labels[lang];
-
-  useEffect(() => {
-    const savedTheme = window.localStorage.getItem("movex-theme") as Theme | null;
-    if (savedTheme) setTheme(savedTheme);
-    else {
-      const cairoHour = Number(
-        new Intl.DateTimeFormat("en-GB", {hour: "2-digit", hour12: false, timeZone: "Africa/Cairo"}).format(new Date())
-      );
-      setTheme(cairoHour >= 18 || cairoHour < 6 ? "dark" : "light");
-    }
-  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -154,26 +156,92 @@ export default function Home() {
 
   const greeting = useMemo(() => {
     const hour = Number(new Intl.DateTimeFormat("en-GB", {hour: "2-digit", hour12: false, timeZone: "Africa/Cairo"}).format(new Date()));
-    if (lang === "en") return hour < 12 ? "Good morning, Mohamed" : hour < 20 ? "Good evening, Mohamed" : "Good night, Mohamed";
-    return hour < 12 ? "صباح الخير يا محمد" : hour < 20 ? "مساء الخير يا محمد" : "ليلة سعيدة يا محمد";
-  }, [lang]);
+    if (lang === "en") return hour < 12 ? `Good morning, ${displayName}` : hour < 20 ? `Good evening, ${displayName}` : `Good night, ${displayName}`;
+    return hour < 12 ? `صباح الخير يا ${displayName}` : hour < 20 ? `مساء الخير يا ${displayName}` : `ليلة سعيدة يا ${displayName}`;
+  }, [lang, displayName]);
 
   const score = answers.reduce((sum, answer, index) => sum + (answer === questions[index]?.correct ? 1 : 0), 0);
   const scorePercent = Math.round((score / questions.length) * 100);
 
-  function handleLogin(nextRole: "driver" | "admin") {
-    if (phone && !/^01\d{9}$/.test(phone)) {
-      setLoginError("أدخل رقم هاتف مصري صحيح مكوّن من 11 رقمًا");
+  async function handleLogin() {
+    const normalizedCode = loginCode.trim().toUpperCase().replace(/\s+/g, "");
+    if (!/^[A-Z0-9_-]{3,24}$/.test(normalizedCode)) {
+      setLoginError("أدخل كود المستخدم الصحيح، مثال: TR004");
       return;
     }
-    if (password && password.length < 6) {
-      setLoginError("الرقم السري يجب ألا يقل عن 6 أرقام");
+    if (!password) {
+      setLoginError("أدخل كلمة السر");
       return;
     }
+    setLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({loginCode: normalizedCode, password}),
+      });
+      const data = await response.json() as {
+        error?: string;
+        user?: {displayName:string; role:"driver"|"supervisor"|"system_admin"; mustChangePassword:boolean};
+      };
+      if (!response.ok || !data.user) {
+        setLoginError(data.error ?? "تعذر تسجيل الدخول");
+        return;
+      }
+      const nextRole = data.user.role === "driver" ? "driver" : "admin";
+      setDisplayName(data.user.displayName);
+      setRole(nextRole);
+      setView(nextRole === "admin" ? "admin" : "home");
+      setMustChangePassword(data.user.mustChangePassword);
+      setLoggedIn(true);
+      setLoginError("");
+    } catch {
+      setLoginError("تعذر الاتصال بالنظام الآن. تحقق من الإنترنت وحاول مرة أخرى.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  function handlePreview(nextRole: "driver" | "admin") {
     setRole(nextRole);
     setView(nextRole === "admin" ? "admin" : "home");
+    setDisplayName(nextRole === "driver" ? "محمد" : "المشرف");
     setLoggedIn(true);
+    setMustChangePassword(false);
     setLoginError("");
+  }
+
+  async function changeTemporaryPassword() {
+    setLoginError("");
+    if (newPassword.length < 8) {
+      setLoginError("كلمة السر الجديدة يجب ألا تقل عن 8 خانات");
+      return;
+    }
+    if (newPassword !== passwordConfirmation) {
+      setLoginError("تأكيد كلمة السر غير مطابق");
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password:newPassword, confirmation:passwordConfirmation}),
+      });
+      const data = await response.json() as {error?:string};
+      if (!response.ok) {
+        setLoginError(data.error ?? "تعذر تغيير كلمة السر");
+        return;
+      }
+      setMustChangePassword(false);
+      setNewPassword("");
+      setPasswordConfirmation("");
+      setToast("تم تغيير كلمة السر بنجاح");
+    } catch {
+      setLoginError("تعذر الاتصال بالنظام الآن.");
+    } finally {
+      setLoginLoading(false);
+    }
   }
 
   function go(next: View) {
@@ -205,17 +273,17 @@ export default function Home() {
             <h1>كل تدريبك ورحلاتك<br/>في مكان واحد</h1>
             <p>واجهة سهلة من الموبايل لمتابعة الدورات، الاختبارات والنتائج، والوصول السريع لنموذج الرحلات.</p>
           </div>
-          <form className="login-form" onSubmit={(e) => {e.preventDefault(); handleLogin("driver");}}>
-            <label>رقم الهاتف<input inputMode="tel" autoComplete="tel" placeholder="01xxxxxxxxx" value={phone} onChange={(e)=>setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}/></label>
-            <label>الرقم السري<input type="password" inputMode="numeric" autoComplete="current-password" placeholder="••••••" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>
+          <form className="login-form" onSubmit={(e) => {e.preventDefault(); void handleLogin();}}>
+            <label>كود المستخدم<input autoCapitalize="characters" autoComplete="username" placeholder="مثال: TR004" value={loginCode} onChange={(e)=>setLoginCode(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 24))}/></label>
+            <label>كلمة السر<input type="password" autoComplete="current-password" placeholder="••••••••" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>
             {loginError && <p className="form-error">{loginError}</p>}
-            <button className="primary-button" type="submit">دخول السائق <Icon name="arrow"/></button>
-            <button className="text-button" type="button">نسيت الرقم السري؟</button>
+            <button className="primary-button" type="submit" disabled={loginLoading}>{loginLoading ? "جارٍ التحقق..." : "دخول إلى MOVE X"} <Icon name="arrow"/></button>
+            <button className="text-button" type="button">نسيت كلمة السر؟ تواصل مع المشرف لإعادة تعيينها</button>
           </form>
           <div className="demo-actions">
             <span>للمراجعة قبل تفعيل الحسابات</span>
-            <button onClick={()=>handleLogin("driver")}>معاينة كسائق</button>
-            <button onClick={()=>handleLogin("admin")}>معاينة كمشرف</button>
+            <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>
+            <button onClick={()=>handlePreview("admin")}>معاينة كمشرف</button>
           </div>
         </section>
         <aside className="login-side">
@@ -224,6 +292,27 @@ export default function Home() {
         </aside>
       </main>
     );
+  }
+
+  if (mustChangePassword) {
+    return <main className="login-shell password-reset-shell">
+      <section className="login-card password-reset-card">
+        <div className="login-brand"><Logo/><span>تأمين الحساب</span></div>
+        <div className="security-step"><span><Icon name="shield"/></span><div><b>أول دخول إلى حسابك</b><small>يجب تغيير كلمة السر المؤقتة قبل استخدام أي جزء من النظام.</small></div></div>
+        <div className="login-copy">
+          <span className="eyebrow">خطوة إلزامية لمرة واحدة</span>
+          <h1>أنشئ كلمة سر خاصة بك</h1>
+          <p>استخدم 8 خانات على الأقل ولا تستخدم كلمة السر المؤقتة 12345678 مرة أخرى.</p>
+        </div>
+        <form className="login-form" onSubmit={(event)=>{event.preventDefault();void changeTemporaryPassword();}}>
+          <label>كلمة السر الجديدة<input type="password" autoComplete="new-password" value={newPassword} onChange={(event)=>setNewPassword(event.target.value)}/></label>
+          <label>تأكيد كلمة السر<input type="password" autoComplete="new-password" value={passwordConfirmation} onChange={(event)=>setPasswordConfirmation(event.target.value)}/></label>
+          {loginError && <p className="form-error">{loginError}</p>}
+          <button className="primary-button" type="submit" disabled={loginLoading}>{loginLoading ? "جارٍ الحفظ..." : "حفظ ومتابعة"}<Icon name="arrow"/></button>
+        </form>
+      </section>
+      <aside className="login-side"><div className="road-line"/><div className="side-content"><Icon name="shield"/><strong>حسابك مسؤوليتك</strong><span>لن يستطيع المشرف رؤية كلمة السر الجديدة.</span></div></aside>
+    </main>;
   }
 
   const navItems = role === "admin" ? [
@@ -335,7 +424,10 @@ function Trips() {
 }
 
 function Profile({role,setRole,setLoggedIn}:{role:"driver"|"admin";setRole:(v:"driver"|"admin")=>void;setLoggedIn:(v:boolean)=>void}) {
-  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والتفضيلات"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo">م<button><Icon name="upload"/></button></div><h2>محمد سعد</h2><span>سائق — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>رقم الهاتف<input value="01000000000" readOnly/></label><label>البريد الإلكتروني<input value="driver@example.com" readOnly/></label><label>اللغة المفضلة<select defaultValue="ar"><option value="ar">العربية</option><option value="en">English</option></select></label><div className="role-preview"><span>وضع المعاينة الحالي: <b>{role==="admin"?"مشرف":"سائق"}</b></span><button onClick={()=>setRole(role==="admin"?"driver":"admin")}>التبديل للمعاينة</button></div><button className="danger-button" onClick={()=>setLoggedIn(false)}>تسجيل الخروج</button></article></section></div>;
+  async function logout() {
+    try { await fetch("/api/auth/logout", {method:"POST"}); } finally { setLoggedIn(false); }
+  }
+  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والهوية الموثقة"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo">م<button><Icon name="upload"/></button></div><h2>محمد سعد</h2><span>سائق — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button><div className="face-status"><span className="face-status-icon"><Icon name="shield"/></span><div><b>التحقق من الوجه</b><small>غير مسجل — سيُفعّل بعد اعتماد الصورة المرجعية وموافقة السائق.</small></div><em>قيد التجهيز</em></div></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>كود المستخدم<input value="TR004" readOnly/></label><label>البريد الإلكتروني<input value="driver@example.com" readOnly/></label><label>اللغة المفضلة<select defaultValue="ar"><option value="ar">العربية</option><option value="en">English</option></select></label><div className="identity-policy"><Icon name="shield"/><div><b>هوية واحدة لكل خدمات MOVE X</b><small>سيُستخدم التحقق الموثق مستقبلًا في الرحلات والحوادث والاختبارات والإجراءات الحساسة.</small></div></div><div className="role-preview"><span>وضع المعاينة الحالي: <b>{role==="admin"?"مشرف":"سائق"}</b></span><button onClick={()=>setRole(role==="admin"?"driver":"admin")}>التبديل للمعاينة</button></div><button className="danger-button" onClick={()=>void logout()}>تسجيل الخروج</button></article></section></div>;
 }
 
 function AdminDashboard({go,setToast}:{go:(v:View)=>void;setToast:(v:string)=>void}) {
