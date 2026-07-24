@@ -157,6 +157,7 @@ test("normalizes and validates login codes", () => {
 test("hashes and verifies passwords without retaining plaintext", async () => {
   const hash = await hashPassword("A-safe-test-password");
   assert.match(hash, /^pbkdf2-sha256\$/);
+  assert.equal(Number(hash.split("$")[1]), 100_000);
   assert.equal(hash.includes("A-safe-test-password"), false);
   assert.equal(await verifyPassword("A-safe-test-password", hash), true);
   assert.equal(await verifyPassword("wrong-password", hash), false);

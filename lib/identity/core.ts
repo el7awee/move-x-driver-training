@@ -104,7 +104,8 @@ export class IdentityError extends Error {
   }
 }
 
-const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Workers supports PBKDF2 iteration counts up to 100,000.
+const PASSWORD_ITERATIONS = 100_000;
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_CODE_FAILURE_LIMIT = 5;
