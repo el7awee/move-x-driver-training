@@ -1,24 +1,22 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { auditLogs, authSessions } from "@/db/schema";
-import { clearSessionCookie, getCurrentSession, safeAuthError } from "../_shared";
+import {
+  clearSessionCookie,
+  getCurrentIdentity,
+  safeAuthError,
+} from "../_shared";
 
 export async function POST(request: Request) {
   try {
-    const current = await getCurrentSession(request);
-    if (current) {
-      const db = await getDb();
-      await db.update(authSessions).set({ revokedAt: new Date().toISOString() })
-        .where(eq(authSessions.id, current.session.id));
-      await db.insert(auditLogs).values({
-        actorUserId: current.user.id,
-        action: "auth.logout",
-        moduleKey: "identity",
-        result: "success",
-      });
+    const current = await getCurrentIdentity(request);
+    if (current.context) {
+      await current.service.logout(current.context);
     }
-    return Response.json({ ok: true }, { headers: { "Set-Cookie": clearSessionCookie() } });
+    return Response.json(
+      { ok: true },
+      { headers: { "Set-Cookie": clearSessionCookie(), "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    return safeAuthError(error);
+    const response = safeAuthError(error);
+    response.headers.set("Set-Cookie", clearSessionCookie());
+    return response;
   }
 }

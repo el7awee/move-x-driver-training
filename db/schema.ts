@@ -1,9 +1,11 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+const currentIsoTimestamp = sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
+
 const timestamps = {
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
+  updatedAt: text("updated_at").notNull().default(currentIsoTimestamp),
 };
 
 export const users = sqliteTable("users", {
@@ -32,7 +34,6 @@ export const driverProfiles = sqliteTable("driver_profiles", {
   employeeCode: text("employee_code").notNull(),
   licenseNumber: text("license_number"),
   licenseExpiresAt: text("license_expires_at"),
-  vehicleNumber: text("vehicle_number"),
   ...timestamps,
 }, (table) => [
   uniqueIndex("driver_profiles_user_unique").on(table.userId),
@@ -49,10 +50,11 @@ export const authSessions = sqliteTable("auth_sessions", {
   ipHash: text("ip_hash"),
   expiresAt: text("expires_at").notNull(),
   revokedAt: text("revoked_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
 }, (table) => [
   uniqueIndex("auth_sessions_token_unique").on(table.tokenHash),
   index("auth_sessions_user_idx").on(table.userId, table.expiresAt),
+  index("auth_sessions_retention_idx").on(table.expiresAt, table.revokedAt),
 ]);
 
 export const loginAttempts = sqliteTable("login_attempts", {
@@ -60,9 +62,11 @@ export const loginAttempts = sqliteTable("login_attempts", {
   loginCode: text("login_code").notNull(),
   ipHash: text("ip_hash").notNull(),
   succeeded: integer("succeeded", { mode: "boolean" }).notNull().default(false),
-  attemptedAt: text("attempted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  attemptedAt: text("attempted_at").notNull().default(currentIsoTimestamp),
 }, (table) => [
-  index("login_attempts_lookup_idx").on(table.loginCode, table.ipHash, table.attemptedAt),
+  index("login_attempts_login_code_idx").on(table.loginCode, table.succeeded, table.attemptedAt),
+  index("login_attempts_ip_idx").on(table.ipHash, table.succeeded, table.attemptedAt),
+  index("login_attempts_retention_idx").on(table.attemptedAt),
 ]);
 
 export const biometricEnrollments = sqliteTable("biometric_enrollments", {
@@ -95,7 +99,7 @@ export const biometricVerifications = sqliteTable("biometric_verifications", {
   faceMatched: integer("face_matched", { mode: "boolean" }).notNull().default(false),
   confidence: integer("confidence"),
   decision: text("decision", { enum: ["approved", "rejected", "manual_review"] }).notNull(),
-  verifiedAt: text("verified_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  verifiedAt: text("verified_at").notNull().default(currentIsoTimestamp),
 }, (table) => [
   index("biometric_verifications_user_idx").on(table.userId, table.verifiedAt),
   index("biometric_verifications_module_idx").on(table.moduleKey, table.purpose),
@@ -110,7 +114,7 @@ export const auditLogs = sqliteTable("audit_logs", {
   entityId: text("entity_id"),
   result: text("result", { enum: ["success", "failure", "blocked"] }).notNull(),
   metadataJson: text("metadata_json").notNull().default("{}"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
 }, (table) => [
   index("audit_logs_actor_idx").on(table.actorUserId, table.createdAt),
   index("audit_logs_module_idx").on(table.moduleKey, table.createdAt),

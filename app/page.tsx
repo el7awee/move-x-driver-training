@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  isIdentityPreviewEnabled,
+  type BiometricStatus,
+  type IdentityRole,
+  type PublicIdentityUser as IdentityUser,
+} from "@/lib/identity/core";
 
 type View =
   | "home"
@@ -13,6 +19,12 @@ type View =
   | "admin";
 type Theme = "light" | "dark";
 type Lang = "ar" | "en";
+type AuthState = "loading" | "unauthenticated" | "authenticated" | "unavailable";
+
+const PREVIEW_ENABLED = isIdentityPreviewEnabled(
+  process.env.NODE_ENV,
+  process.env.NEXT_PUBLIC_ENABLE_IDENTITY_PREVIEW,
+);
 
 const FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSdVMrtMiyQ2F2tYlv7XHjWWExJ_Y8FWvyBN_A-0ldqkokPnDg/viewform";
@@ -106,9 +118,11 @@ function Logo() {
 }
 
 export default function Home() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [role, setRole] = useState<"driver" | "admin">("driver");
-  const [displayName, setDisplayName] = useState("محمد");
+  const [authState, setAuthState] = useState<AuthState>("loading");
+  const [identityUser, setIdentityUser] = useState<IdentityUser | null>(null);
+  const [previewRole, setPreviewRole] = useState<"driver" | "admin" | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [sessionError, setSessionError] = useState("");
   const [view, setView] = useState<View>("home");
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return "light";
@@ -124,7 +138,6 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
-  const [mustChangePassword, setMustChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [watchProgress, setWatchProgress] = useState(60);
@@ -134,6 +147,51 @@ export default function Home() {
   const [quizFinished, setQuizFinished] = useState(false);
   const [toast, setToast] = useState("");
   const t = labels[lang];
+  const role = previewRole ??
+    (identityUser ? (identityUser.role === "driver" ? "driver" : "admin") : "driver");
+  const loggedIn = Boolean(identityUser || previewRole);
+  const displayName = identityUser?.displayName ?? "وضع المعاينة";
+  const canViewAdmin = previewRole === "admin" ||
+    identityUser?.role === "supervisor" ||
+    identityUser?.role === "system_admin";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function restoreIdentity() {
+      setAuthState("loading");
+      setSessionError("");
+      try {
+        const response = await fetch("/api/auth/me", {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = await response.json() as { error?: string; user?: IdentityUser };
+        if (response.ok && data.user) {
+          setIdentityUser(data.user);
+          setLang(data.user.preferredLanguage);
+          setView(data.user.role === "driver" ? "home" : "admin");
+          setAuthState("authenticated");
+          return;
+        }
+        if (response.status === 401) {
+          setIdentityUser(null);
+          setAuthState("unauthenticated");
+          return;
+        }
+        setIdentityUser(null);
+        setSessionError(data.error ?? "خدمة الهوية غير متاحة حاليًا.");
+        setAuthState("unavailable");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setIdentityUser(null);
+        setSessionError("تعذر الاتصال بخدمة الهوية. تحقق من الاتصال وحاول مرة أخرى.");
+        setAuthState("unavailable");
+      }
+    }
+    void restoreIdentity();
+    return () => controller.abort();
+  }, [restoreAttempt]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -182,18 +240,18 @@ export default function Home() {
       });
       const data = await response.json() as {
         error?: string;
-        user?: {displayName:string; role:"driver"|"supervisor"|"system_admin"; mustChangePassword:boolean};
+        user?: IdentityUser;
       };
       if (!response.ok || !data.user) {
         setLoginError(data.error ?? "تعذر تسجيل الدخول");
         return;
       }
-      const nextRole = data.user.role === "driver" ? "driver" : "admin";
-      setDisplayName(data.user.displayName);
-      setRole(nextRole);
-      setView(nextRole === "admin" ? "admin" : "home");
-      setMustChangePassword(data.user.mustChangePassword);
-      setLoggedIn(true);
+      setIdentityUser(data.user);
+      setPreviewRole(null);
+      setLang(data.user.preferredLanguage);
+      setView(data.user.role === "driver" ? "home" : "admin");
+      setAuthState("authenticated");
+      setPassword("");
       setLoginError("");
     } catch {
       setLoginError("تعذر الاتصال بالنظام الآن. تحقق من الإنترنت وحاول مرة أخرى.");
@@ -203,11 +261,10 @@ export default function Home() {
   }
 
   function handlePreview(nextRole: "driver" | "admin") {
-    setRole(nextRole);
+    if (!PREVIEW_ENABLED) return;
     setView(nextRole === "admin" ? "admin" : "home");
-    setDisplayName(nextRole === "driver" ? "محمد" : "المشرف");
-    setLoggedIn(true);
-    setMustChangePassword(false);
+    setPreviewRole(nextRole);
+    setIdentityUser(null);
     setLoginError("");
   }
 
@@ -228,12 +285,12 @@ export default function Home() {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({password:newPassword, confirmation:passwordConfirmation}),
       });
-      const data = await response.json() as {error?:string};
-      if (!response.ok) {
+      const data = await response.json() as {error?:string; user?:IdentityUser};
+      if (!response.ok || !data.user) {
         setLoginError(data.error ?? "تعذر تغيير كلمة السر");
         return;
       }
-      setMustChangePassword(false);
+      setIdentityUser(data.user);
       setNewPassword("");
       setPasswordConfirmation("");
       setToast("تم تغيير كلمة السر بنجاح");
@@ -244,7 +301,21 @@ export default function Home() {
     }
   }
 
+  async function logout() {
+    try {
+      if (identityUser) await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setIdentityUser(null);
+      setPreviewRole(null);
+      setAuthState("unauthenticated");
+      setView("home");
+      setPassword("");
+      setLoginError("");
+    }
+  }
+
   function go(next: View) {
+    if (next === "admin" && !canViewAdmin) return;
     setView(next);
     window.scrollTo({top: 0, behavior: "smooth"});
   }
@@ -259,6 +330,34 @@ export default function Home() {
     if (answers[questionIndex] === undefined) return;
     if (questionIndex < questions.length - 1) setQuestionIndex(questionIndex + 1);
     else setQuizFinished(true);
+  }
+
+  if (authState === "loading" && !previewRole) {
+    return <main className="identity-state-shell">
+      <section className="identity-state-card card" aria-live="polite">
+        <Logo/>
+        <span className="identity-spinner" aria-hidden="true"/>
+        <h1>جارٍ التحقق من الجلسة</h1>
+        <p>نتأكد من هوية المستخدم قبل عرض بيانات MOVE X.</p>
+      </section>
+    </main>;
+  }
+
+  if (authState === "unavailable" && !previewRole) {
+    return <main className="identity-state-shell">
+      <section className="identity-state-card card" role="alert">
+        <Logo/>
+        <span className="identity-state-icon"><Icon name="shield"/></span>
+        <h1>خدمة الهوية غير متاحة</h1>
+        <p>{sessionError}</p>
+        <button className="primary-button" onClick={()=>setRestoreAttempt((value)=>value+1)}>إعادة المحاولة</button>
+        {PREVIEW_ENABLED && <div className="demo-actions">
+          <span>معاينة تطويرية فقط</span>
+          <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>
+          <button onClick={()=>handlePreview("admin")}>معاينة كمشرف</button>
+        </div>}
+      </section>
+    </main>;
   }
 
   if (!loggedIn) {
@@ -280,11 +379,11 @@ export default function Home() {
             <button className="primary-button" type="submit" disabled={loginLoading}>{loginLoading ? "جارٍ التحقق..." : "دخول إلى MOVE X"} <Icon name="arrow"/></button>
             <button className="text-button" type="button">نسيت كلمة السر؟ تواصل مع المشرف لإعادة تعيينها</button>
           </form>
-          <div className="demo-actions">
+          {PREVIEW_ENABLED && <div className="demo-actions">
             <span>للمراجعة قبل تفعيل الحسابات</span>
             <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>
             <button onClick={()=>handlePreview("admin")}>معاينة كمشرف</button>
-          </div>
+          </div>}
         </section>
         <aside className="login-side">
           <div className="road-line" />
@@ -294,7 +393,7 @@ export default function Home() {
     );
   }
 
-  if (mustChangePassword) {
+  if (identityUser?.mustChangePassword) {
     return <main className="login-shell password-reset-shell">
       <section className="login-card password-reset-card">
         <div className="login-brand"><Logo/><span>تأمين الحساب</span></div>
@@ -338,19 +437,19 @@ export default function Home() {
             <button className="round-button" onClick={()=>setLang(lang === "ar" ? "en" : "ar")} aria-label="تغيير اللغة">{lang === "ar" ? "EN" : "ع"}</button>
             <button className="round-button" onClick={()=>setTheme(theme === "light" ? "dark" : "light")} aria-label="تغيير الوضع"><Icon name={theme === "light" ? "moon" : "sun"}/></button>
             <button className="round-button notification-button" aria-label={t.notifications}><Icon name="bell"/><i>3</i></button>
-            <button className="avatar" onClick={()=>go("profile")} aria-label="الملف الشخصي">م</button>
+            <button className="avatar" onClick={()=>go("profile")} aria-label="الملف الشخصي">{displayName.trim().charAt(0) || "؟"}</button>
           </div>
         </header>
 
         <div className="content-area">
-          {view === "home" && <DriverHome t={t} go={go} progress={watchProgress}/>} 
+          {view === "home" && <DriverHome t={t} go={go} progress={watchProgress} displayName={displayName}/>}
           {view === "courses" && <Courses go={go} progress={watchProgress}/>} 
           {view === "course" && <CourseDetail go={go} progress={watchProgress} playing={playing} setPlaying={setPlaying}/>} 
           {view === "quiz" && <Quiz go={go} questionIndex={questionIndex} setQuestionIndex={setQuestionIndex} answers={answers} answerQuestion={answerQuestion} nextQuestion={nextQuestion} finished={quizFinished} score={scorePercent}/>} 
           {view === "results" && <Results score={quizFinished ? scorePercent : 85}/>} 
           {view === "trips" && <Trips/>}
-          {view === "profile" && <Profile role={role} setRole={(next)=>{setRole(next); go(next === "admin" ? "admin" : "home");}} setLoggedIn={setLoggedIn}/>} 
-          {view === "admin" && <AdminDashboard go={go} setToast={setToast}/>} 
+          {view === "profile" && <Profile user={identityUser} previewRole={previewRole} logout={logout}/>}
+          {view === "admin" && canViewAdmin && <AdminDashboard go={go} setToast={setToast}/>}
         </div>
 
         <nav className="bottom-nav">{navItems.map(([target, icon, label]) => <button key={target} className={view === target ? "active" : ""} onClick={()=>go(target as View)}><Icon name={icon}/><span>{label}</span></button>)}</nav>
@@ -360,9 +459,9 @@ export default function Home() {
   );
 }
 
-function DriverHome({t, go, progress}:{t:typeof labels.ar;go:(v:View)=>void;progress:number}) {
+function DriverHome({t, go, progress, displayName}:{t:typeof labels.ar;go:(v:View)=>void;progress:number;displayName:string}) {
   return <div className="page-stack">
-    <section className="mobile-welcome"><span className="avatar large">م</span><div><strong>مساء الخير يا محمد</strong><small>جاهز نكمل إنجازك؟</small></div></section>
+    <section className="mobile-welcome"><span className="avatar large">{displayName.trim().charAt(0) || "؟"}</span><div><strong>مرحبًا يا {displayName}</strong><small>جاهز نكمل إنجازك؟</small></div></section>
     <section className="metrics-grid">
       <Metric icon="book" label={t.required} value="3" tone="blue"/>
       <Metric icon="check" label={t.completed} value="7" tone="green"/>
@@ -423,11 +522,34 @@ function Trips() {
   return <div className="page-stack"><PageHead title="رحلاتي" subtitle="الوصول السريع إلى نموذج النشاط اليومي الحالي"/><section className="trip-access card"><div className="trip-access-copy"><span className="trip-big-icon"><Icon name="trip"/></span><div><span className="section-kicker">Google Form المعتمد</span><h1>تسجيل رحلة اليوم</h1><p>سيظل النموذج الحالي مسؤولًا عن إرسال بياناتك ومرفقاتك إلى Daily Activity Log دون أي تغيير.</p></div></div><div className="trip-actions"><button className="primary-button" onClick={()=>setShowForm(!showForm)}>{showForm?"إخفاء النموذج":"فتح داخل MOVE X"}<Icon name="arrow"/></button><a className="secondary-button" href={FORM_URL} target="_blank" rel="noreferrer">فتح النموذج مباشرة</a></div></section>{showForm&&<section className="form-frame card"><div className="frame-head"><span className="status-dot"/> النموذج الحالي — MOVE X<a href={FORM_URL} target="_blank" rel="noreferrer">فتح في نافذة جديدة</a></div><iframe title="نموذج تسجيل رحلات MOVE X" src={`${FORM_URL}?embedded=true`}>جار تحميل النموذج…</iframe></section>}<section className="info-strip"><Icon name="shield"/><div><b>بياناتك مستمرة في نفس المسار</b><span>الإرسال يتم من Google Form الحالي إلى تبويب Daily Activity Log كما هو الآن.</span></div></section></div>;
 }
 
-function Profile({role,setRole,setLoggedIn}:{role:"driver"|"admin";setRole:(v:"driver"|"admin")=>void;setLoggedIn:(v:boolean)=>void}) {
-  async function logout() {
-    try { await fetch("/api/auth/logout", {method:"POST"}); } finally { setLoggedIn(false); }
+function Profile({user,previewRole,logout}:{user:IdentityUser|null;previewRole:"driver"|"admin"|null;logout:()=>Promise<void>}) {
+  if (!user) {
+    return <div className="page-stack">
+      <PageHead title="وضع المعاينة" subtitle="المعاينة التطويرية لا تمثل حسابًا مصادقًا"/>
+      <section className="identity-state-card card">
+        <span className="identity-state-icon"><Icon name="shield"/></span>
+        <h2>لا توجد بيانات هوية في المعاينة</h2>
+        <p>الدور المعروض: {previewRole === "admin" ? "مشرف" : "سائق"}. لا تمنح المعاينة جلسة أو صلاحية لأي API محمي.</p>
+        <button className="danger-button" onClick={()=>void logout()}>إنهاء المعاينة</button>
+      </section>
+    </div>;
   }
-  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والهوية الموثقة"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo">م<button><Icon name="upload"/></button></div><h2>محمد سعد</h2><span>سائق — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button><div className="face-status"><span className="face-status-icon"><Icon name="shield"/></span><div><b>التحقق من الوجه</b><small>غير مسجل — سيُفعّل بعد اعتماد الصورة المرجعية وموافقة السائق.</small></div><em>قيد التجهيز</em></div></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>كود المستخدم<input value="TR004" readOnly/></label><label>البريد الإلكتروني<input value="driver@example.com" readOnly/></label><label>اللغة المفضلة<select defaultValue="ar"><option value="ar">العربية</option><option value="en">English</option></select></label><div className="identity-policy"><Icon name="shield"/><div><b>هوية واحدة لكل خدمات MOVE X</b><small>سيُستخدم التحقق الموثق مستقبلًا في الرحلات والحوادث والاختبارات والإجراءات الحساسة.</small></div></div><div className="role-preview"><span>وضع المعاينة الحالي: <b>{role==="admin"?"مشرف":"سائق"}</b></span><button onClick={()=>setRole(role==="admin"?"driver":"admin")}>التبديل للمعاينة</button></div><button className="danger-button" onClick={()=>void logout()}>تسجيل الخروج</button></article></section></div>;
+
+  const roleLabels: Record<IdentityRole,string> = {
+    driver: "سائق",
+    supervisor: "مشرف",
+    system_admin: "مدير النظام",
+  };
+  const biometricLabels: Record<BiometricStatus,{label:string;note:string}> = {
+    not_enrolled: {label:"غير مسجل",note:"لم تُسجل هوية الوجه بعد."},
+    pending: {label:"قيد المراجعة",note:"تم التسجيل وينتظر اعتماد المشرف."},
+    approved: {label:"معتمد",note:"تم اعتماد هوية الوجه."},
+    rejected: {label:"مرفوض",note:"يحتاج التسجيل إلى إعادة المحاولة."},
+    revoked: {label:"ملغي",note:"تم إلغاء تسجيل هوية الوجه."},
+  };
+  const biometric = biometricLabels[user.biometricStatus];
+  const initial = user.displayName.trim().charAt(0) || "؟";
+  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والهوية الموثقة"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo" style={user.photoUrl?{backgroundImage:`url("${user.photoUrl}")`,backgroundSize:"cover",backgroundPosition:"center"}:undefined}>{user.photoUrl?"":initial}<button><Icon name="upload"/></button></div><h2>{user.displayName}</h2><span>{roleLabels[user.role]} — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button><div className="face-status"><span className="face-status-icon"><Icon name="shield"/></span><div><b>التحقق من الوجه</b><small>{biometric.note}</small></div><em>{biometric.label}</em></div></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>كود المستخدم<input value={user.loginCode} readOnly/></label><label>البريد الإلكتروني<input value={user.email??"غير مسجل"} readOnly/></label><label>رقم الهاتف<input value={user.phone??"غير مسجل"} readOnly/></label><label>اللغة المفضلة<select value={user.preferredLanguage} disabled><option value="ar">العربية</option><option value="en">English</option></select></label><div className="identity-policy"><Icon name="shield"/><div><b>هوية واحدة لكل خدمات MOVE X</b><small>تأتي هذه البيانات من الجلسة المصادق عليها ولا تُحدد صلاحيات الخادم من الواجهة.</small></div></div><button className="danger-button" onClick={()=>void logout()}>تسجيل الخروج</button></article></section></div>;
 }
 
 function AdminDashboard({go,setToast}:{go:(v:View)=>void;setToast:(v:string)=>void}) {
