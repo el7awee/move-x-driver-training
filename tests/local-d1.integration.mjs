@@ -17,6 +17,7 @@ import {
   toPublicIdentityUser,
   verifyPassword,
 } from "../lib/identity/core.ts";
+import { currentIdentityResponse } from "../lib/identity/http.ts";
 import { buildBootstrapSql } from "../scripts/bootstrap-identity.ts";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -295,11 +296,13 @@ test("isolated local D1 enforces the full temporary-credential lifecycle", async
     assert.throws(() => requireReadyUser(login.context), (error) =>
       error instanceof IdentityError && error.code === "password_change_required"
     );
-    assert.equal(
-      toPublicIdentityUser(await service.restoreSession(login.token)).mustChangePassword,
-      true,
+    const authenticatedMeResponse = currentIdentityResponse(
+      await service.restoreSession(login.token),
+      "cleared-test-cookie",
     );
-    context.diagnostic("invited driver logged in and /api/auth/me-equivalent restoration requires password change");
+    assert.equal(authenticatedMeResponse.status, 200);
+    assert.equal((await authenticatedMeResponse.json()).user.mustChangePassword, true);
+    context.diagnostic("invited driver logged in and /api/auth/me returned mustChangePassword=true");
 
     const changed = await service.changePassword(login.context, {
       password: replacementPassword,
@@ -334,8 +337,14 @@ test("isolated local D1 enforces the full temporary-credential lifecycle", async
       "LOCALDRIVER",
     );
     await service.logout(changed.context);
-    assert.equal(await service.restoreSession(changed.token), null);
-    context.diagnostic("logout revoked the fresh session and subsequent /api/auth/me-equivalent restoration is unauthenticated");
+    const loggedOutMeResponse = currentIdentityResponse(
+      await service.restoreSession(changed.token),
+      "cleared-test-cookie",
+    );
+    assert.equal(loggedOutMeResponse.status, 401);
+    assert.equal((await loggedOutMeResponse.json()).code, "unauthenticated");
+    assert.equal(loggedOutMeResponse.headers.get("set-cookie"), "cleared-test-cookie");
+    context.diagnostic("logout revoked the fresh session; /api/auth/me returned 401 and cleared the cookie");
   } finally {
     database?.close();
     await rm(persistTo, { recursive: true, force: true });
