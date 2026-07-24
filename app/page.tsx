@@ -401,7 +401,7 @@ export default function Home() {
         <div className="login-copy">
           <span className="eyebrow">خطوة إلزامية لمرة واحدة</span>
           <h1>أنشئ كلمة سر خاصة بك</h1>
-          <p>استخدم 8 خانات على الأقل ولا تستخدم كلمة السر المؤقتة 12345678 مرة أخرى.</p>
+          <p>استخدم 8 خانات على الأقل ولا تُعِد استخدام كلمة السر المؤقتة.</p>
         </div>
         <form className="login-form" onSubmit={(event)=>{event.preventDefault();void changeTemporaryPassword();}}>
           <label>كلمة السر الجديدة<input type="password" autoComplete="new-password" value={newPassword} onChange={(event)=>setNewPassword(event.target.value)}/></label>

@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import {
   IDENTITY_ROLES,
+  TEMPORARY_INITIAL_PASSWORD,
   hashPassword,
   normalizeLoginCode,
   validLoginCode,
@@ -17,6 +18,8 @@ export interface BootstrapUserInput {
   displayName: string;
   password: string;
   role: IdentityRole;
+  temporaryCredential: boolean;
+  mustChangePassword: boolean;
   email?: string | null;
   phone?: string | null;
   preferredLanguage?: "ar" | "en";
@@ -32,8 +35,22 @@ function validateBootstrapUser(input: BootstrapUserInput) {
   if (!validLoginCode(loginCode)) throw new Error(`Invalid bootstrap login code: ${loginCode}`);
   if (!input.displayName.trim()) throw new Error(`Missing display name for ${loginCode}`);
   if (!IDENTITY_ROLES.includes(input.role)) throw new Error(`Invalid role for ${loginCode}`);
-  if (!validNewPassword(input.password) || input.password === "12345678") {
+  if (
+    typeof input.temporaryCredential !== "boolean" ||
+    typeof input.mustChangePassword !== "boolean"
+  ) {
+    throw new Error(`Credential policy flags must be explicit for ${loginCode}`);
+  }
+  if (!validNewPassword(input.password)) {
     throw new Error(`Bootstrap password does not meet policy for ${loginCode}`);
+  }
+  const usesTemporaryPassword = input.password === TEMPORARY_INITIAL_PASSWORD;
+  const temporaryRole = input.role === "driver" || input.role === "supervisor";
+  if (
+    input.temporaryCredential !== usesTemporaryPassword ||
+    (usesTemporaryPassword && (!temporaryRole || !input.mustChangePassword))
+  ) {
+    throw new Error(`Temporary credential policy is invalid for ${loginCode}`);
   }
   return { ...input, loginCode, displayName: input.displayName.trim() };
 }
@@ -47,7 +64,7 @@ export async function buildBootstrapSql(inputs: BootstrapUserInput[]) {
     throw new Error("Bootstrap input must include a system administrator");
   }
 
-  const statements = ["BEGIN IMMEDIATE;"];
+  const statements: string[] = [];
   for (const user of validated) {
     const passwordHash = await hashPassword(user.password);
     statements.push(
@@ -60,14 +77,13 @@ export async function buildBootstrapSql(inputs: BootstrapUserInput[]) {
         sqlValue(user.phone),
         sqlValue(user.role),
         sqlValue(passwordHash),
-        "true",
+        user.mustChangePassword ? "true" : "false",
         sqlValue("invited"),
         sqlValue(user.preferredLanguage ?? "ar"),
       ].join(", ") +
       ") ON CONFLICT(login_code) DO NOTHING;",
     );
   }
-  statements.push("COMMIT;");
   return statements.join("\n");
 }
 
@@ -77,12 +93,21 @@ function requiredEnvironment(name: string) {
   return value;
 }
 
+function requiredBooleanEnvironment(name: string) {
+  const value = requiredEnvironment(name).toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 function readUsersFromEnvironment() {
   const administrator: BootstrapUserInput = {
     loginCode: requiredEnvironment("BOOTSTRAP_ADMIN_LOGIN_CODE"),
     displayName: requiredEnvironment("BOOTSTRAP_ADMIN_DISPLAY_NAME"),
     password: requiredEnvironment("BOOTSTRAP_ADMIN_PASSWORD"),
     role: "system_admin",
+    temporaryCredential: false,
+    mustChangePassword: requiredBooleanEnvironment("BOOTSTRAP_ADMIN_MUST_CHANGE_PASSWORD"),
     email: process.env.BOOTSTRAP_ADMIN_EMAIL,
     phone: process.env.BOOTSTRAP_ADMIN_PHONE,
     preferredLanguage: process.env.BOOTSTRAP_ADMIN_LANGUAGE === "en" ? "en" : "ar",
@@ -95,9 +120,16 @@ function readUsersFromEnvironment() {
 }
 
 async function runWrangler(database: string, target: "development" | "staging", sqlPath: string) {
-  const executable = process.platform === "win32" ? "npx.cmd" : "npx";
-  const args = ["wrangler", "d1", "execute", database, "--file", sqlPath];
-  if (target === "development") args.push("--local");
+  const executable = process.execPath;
+  const wranglerCli = join(process.cwd(), "node_modules", "wrangler", "bin", "wrangler.js");
+  const args = [wranglerCli, "d1", "execute", database, "--file", sqlPath];
+  if (target === "development") {
+    args.push("--local");
+    const persistTo = process.env.BOOTSTRAP_D1_PERSIST_TO?.trim();
+    if (persistTo) args.push("--persist-to", persistTo);
+    const wranglerConfig = process.env.BOOTSTRAP_WRANGLER_CONFIG?.trim();
+    if (wranglerConfig) args.push("--config", wranglerConfig);
+  }
   else args.push("--remote", "--env", "staging");
 
   await new Promise<void>((resolve, reject) => {

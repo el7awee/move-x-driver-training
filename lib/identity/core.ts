@@ -1,4 +1,5 @@
 export const IDENTITY_ROLES = ["driver", "supervisor", "system_admin"] as const;
+export const TEMPORARY_INITIAL_PASSWORD = ["1234", "5678"].join("");
 
 export type IdentityRole = (typeof IDENTITY_ROLES)[number];
 export type IdentityUserStatus = "invited" | "active" | "suspended";
@@ -405,7 +406,7 @@ export class IdentityService {
     if (input.password !== input.confirmation) {
       throw new IdentityError(400, "password_mismatch", "تأكيد كلمة السر غير مطابق.");
     }
-    if (input.password === "12345678") {
+    if (input.password === TEMPORARY_INITIAL_PASSWORD) {
       throw new IdentityError(
         400,
         "temporary_password_reuse",

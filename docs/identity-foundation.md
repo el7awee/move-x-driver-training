@@ -33,9 +33,17 @@ npm run identity:bootstrap
 Provide all credentials through environment variables described in
 `.env.example`. `BOOTSTRAP_TARGET` accepts only `development` or `staging`.
 Staging additionally requires the explicit confirmation value documented in
-the script. Production is rejected. Imported users are created as `invited`
-with `mustChangePassword=true`, which is also the required policy for a future
-Google Sheets import.
+the script. Production is rejected.
+
+Every bootstrap/import record must explicitly supply `temporaryCredential` and
+`mustChangePassword`. The agreed temporary initial credential is accepted only
+for invited drivers or supervisors when both flags are `true`. A system
+administrator can never use that temporary credential. A non-temporary
+administrator password is supplied through the environment and its
+`mustChangePassword` value is explicit. Bootstrap SQL contains only salted
+password hashes and remains idempotent with `ON CONFLICT(login_code) DO NOTHING`.
+The temporary initial credential is rejected by password replacement for every
+role.
 
 ## Retention guidance
 

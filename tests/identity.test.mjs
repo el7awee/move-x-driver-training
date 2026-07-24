@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   IdentityError,
   IdentityService,
+  TEMPORARY_INITIAL_PASSWORD,
   enforcePasswordChanged,
   hashPassword,
   isIdentityPreviewEnabled,
@@ -284,8 +285,8 @@ test("forces password replacement, revokes old sessions, and issues a fresh sess
   );
   await expectIdentityError(
     () => service.changePassword(login.context, {
-      password: "12345678",
-      confirmation: "12345678",
+      password: TEMPORARY_INITIAL_PASSWORD,
+      confirmation: TEMPORARY_INITIAL_PASSWORD,
       ipAddress: "192.0.2.60",
     }),
     400,
@@ -301,6 +302,33 @@ test("forces password replacement, revokes old sessions, and issues a fresh sess
   assert.equal(await service.restoreSession(login.token), null);
   assert.equal((await service.restoreSession(changed.token))?.user.mustChangePassword, false);
   assert.equal(await verifyPassword("A-new-safe-password", store.users.get(user.loginCode).passwordHash), true);
+});
+
+test("rejects the temporary credential as a new password for every role", async () => {
+  for (const [index, role] of ["driver", "supervisor", "system_admin"].entries()) {
+    const user = await createUser({
+      id: index + 1,
+      loginCode: `ROLE${index + 1}`,
+      role,
+      mustChangePassword: true,
+    });
+    const store = new FakeIdentityStore([user]);
+    const service = createService(store);
+    const login = await service.login({
+      loginCode: user.loginCode,
+      password: "A-safe-test-password",
+      ipAddress: `192.0.2.${70 + index}`,
+    });
+    await expectIdentityError(
+      () => service.changePassword(login.context, {
+        password: TEMPORARY_INITIAL_PASSWORD,
+        confirmation: TEMPORARY_INITIAL_PASSWORD,
+        ipAddress: `192.0.2.${70 + index}`,
+      }),
+      400,
+      "temporary_password_reuse",
+    );
+  }
 });
 
 test("enforces server-side role authorization", async () => {
@@ -385,9 +413,115 @@ test("builds an idempotent bootstrap without embedding plaintext passwords", asy
     displayName: "Environment Supplied Administrator",
     password: "Bootstrap-only-safe-password",
     role: "system_admin",
+    temporaryCredential: false,
+    mustChangePassword: false,
   }]);
   assert.match(sql, /ON CONFLICT\(login_code\) DO NOTHING/);
   assert.match(sql, /must_change_password/);
   assert.equal(sql.includes("Bootstrap-only-safe-password"), false);
-  assert.equal(sql.includes("12345678"), false);
+  assert.equal(sql.includes(TEMPORARY_INITIAL_PASSWORD), false);
+});
+
+test("permits explicit temporary credentials only for invited drivers and supervisors", async () => {
+  for (const role of ["driver", "supervisor"]) {
+    const sql = await buildBootstrapSql([
+      {
+        loginCode: "ADMIN01",
+        displayName: "Test Administrator",
+        password: "Bootstrap-only-safe-password",
+        role: "system_admin",
+        temporaryCredential: false,
+        mustChangePassword: false,
+      },
+      {
+        loginCode: role === "driver" ? "DRIVER01" : "SUPERVISOR01",
+        displayName: `Test ${role}`,
+        password: TEMPORARY_INITIAL_PASSWORD,
+        role,
+        temporaryCredential: true,
+        mustChangePassword: true,
+      },
+    ]);
+    assert.match(sql, /'invited'/);
+    assert.equal(sql.includes(TEMPORARY_INITIAL_PASSWORD), false);
+  }
+});
+
+test("rejects temporary bootstrap credentials for system administrators", async () => {
+  await assert.rejects(
+    () => buildBootstrapSql([{
+      loginCode: "ADMIN01",
+      displayName: "Test Administrator",
+      password: TEMPORARY_INITIAL_PASSWORD,
+      role: "system_admin",
+      temporaryCredential: true,
+      mustChangePassword: true,
+    }]),
+    /Temporary credential policy/,
+  );
+});
+
+test("rejects temporary bootstrap credentials unless both policy flags are explicit", async () => {
+  const administrator = {
+    loginCode: "ADMIN01",
+    displayName: "Test Administrator",
+    password: "Bootstrap-only-safe-password",
+    role: "system_admin",
+    temporaryCredential: false,
+    mustChangePassword: false,
+  };
+  for (const flags of [
+    { temporaryCredential: false, mustChangePassword: true },
+    { temporaryCredential: true, mustChangePassword: false },
+  ]) {
+    await assert.rejects(
+      () => buildBootstrapSql([
+        administrator,
+        {
+          loginCode: "DRIVER01",
+          displayName: "Test Driver",
+          password: TEMPORARY_INITIAL_PASSWORD,
+          role: "driver",
+          ...flags,
+        },
+      ]),
+      /Temporary credential policy/,
+    );
+  }
+});
+
+test("rejects a temporaryCredential flag paired with a permanent password", async () => {
+  await assert.rejects(
+    () => buildBootstrapSql([
+      {
+        loginCode: "ADMIN01",
+        displayName: "Test Administrator",
+        password: "Bootstrap-only-safe-password",
+        role: "system_admin",
+        temporaryCredential: false,
+        mustChangePassword: false,
+      },
+      {
+        loginCode: "DRIVER01",
+        displayName: "Test Driver",
+        password: "Driver-permanent-safe-password",
+        role: "driver",
+        temporaryCredential: true,
+        mustChangePassword: true,
+      },
+    ]),
+    /Temporary credential policy/,
+  );
+});
+
+test("rejects bootstrap records with omitted credential policy flags", async () => {
+  await assert.rejects(
+    () => buildBootstrapSql([{
+      loginCode: "ADMIN01",
+      displayName: "Test Administrator",
+      password: "Bootstrap-only-safe-password",
+      role: "system_admin",
+    }]),
+    /Credential policy flags must be explicit/,
+  );
 });
