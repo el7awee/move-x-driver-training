@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "move-x-driver-training-staging",
+  "name": "move-x-driver-training",
   "account_id": "928c5b01a502dd980d246f447f86a876",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-07-24",
@@ -18,19 +18,23 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "move-x-driver-training-staging",
-      "database_id": "3926cd87-be27-46a2-9e67-52bda745735d"
+      "database_name": "move-x-driver-training-production",
+      "database_id": "6c20d06e-53e2-4a31-861d-a3b025dfe5da"
     }
   ],
   "vars": {
-    "NEXT_PUBLIC_ENABLE_IDENTITY_PREVIEW": "false",
-    "IDENTITY_STAGING_VALIDATION": "true"
+    "NEXT_PUBLIC_ENABLE_IDENTITY_PREVIEW": "false"
   },
   "env": {
     "staging": {
       "name": "move-x-driver-training-staging",
       "workers_dev": true,
       "preview_urls": true,
+      "assets": {
+        "directory": "dist/client",
+        "not_found_handling": "none",
+        "binding": "ASSETS"
+      },
       "images": {
         "binding": "IMAGES"
       },

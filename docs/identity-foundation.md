@@ -58,26 +58,42 @@ role.
 - Run cleanup as a bounded scheduled job using the retention indexes. Cleanup
   automation and production scheduling are outside this pull request.
 
-## Isolated staging
+## Isolated production and staging
 
-`wrangler.jsonc` is deliberately staging-only: both its root name and
-`env.staging.name` target `move-x-driver-training-staging`. It contains only the
-non-secret staging D1 identifier and keeps `DB` as the application binding.
-There are no production resource IDs, routes, or custom domains in the file.
+`wrangler.jsonc` uses the top-level configuration only for the existing
+`move-x-driver-training` Production Worker. Its `DB` binding targets the
+empty, schema-only `move-x-driver-training-production` D1 database.
+`IDENTITY_STAGING_VALIDATION` is intentionally absent from Production.
 
-Use only the explicit staging commands:
+`env.staging` is explicit and isolated: it targets only the
+`move-x-driver-training-staging` Worker and D1 database, defines its own
+`DB`, assets, image binding, and variables, and enables
+`IDENTITY_STAGING_VALIDATION=true`. Production and Staging database IDs must
+never match.
+
+Build and inspect Production without deploying:
 
 ```text
 npx vinext build
-npx vinext deploy --env staging
-npm run identity:bootstrap
+npx wrangler deploy --dry-run
 ```
+
+Build and inspect Staging without deploying:
+
+```text
+CLOUDFLARE_ENV=staging npx vinext build
+npx wrangler deploy --env staging --dry-run
+```
+
+Actual Production deployment is owned by Cloudflare Workers Builds from
+`main`; do not run a manual Production deployment. Never point the top-level
+configuration at the Staging D1 database.
 
 Set `BOOTSTRAP_TARGET=staging`,
 `BOOTSTRAP_D1_DATABASE=move-x-driver-training-staging`, and the documented
 staging confirmation only for the bootstrap process. Store
 `AUTH_IP_HASH_KEY` with `wrangler secret put --env staging`; never place it in
 an environment file or committed configuration. Identity preview stays false.
-The staging authorization-check route exists only while
-`IDENTITY_STAGING_VALIDATION=true`; remove that variable and route before any
-production release.
+The staging authorization-check route is disabled in Production because the
+server enables it only when `IDENTITY_STAGING_VALIDATION` equals the exact
+string `"true"`.
