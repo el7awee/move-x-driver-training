@@ -424,7 +424,7 @@ export class OperationalStore {
 
   async vehicleOperationsOverview() {
     const rows = await this.db.prepare(`SELECT v.id,v.internal_code,v.plate_number,v.status,
-      (SELECT GROUP_CONCAT(u.display_name || ' (' || a.shift_type || ')', '، ')
+      (SELECT GROUP_CONCAT(u.display_name || ' (' || CASE a.shift_type WHEN 'morning' THEN 'صباحية' WHEN 'evening' THEN 'مسائية' WHEN 'night' THEN 'ليلية' ELSE 'مرنة' END || ')', '، ')
        FROM vehicle_assignments a JOIN users u ON u.id=a.driver_user_id
        WHERE a.vehicle_id=v.id AND a.status='active' AND a.source='manual_admin'
        AND (a.valid_from IS NULL OR a.valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
