@@ -434,6 +434,33 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .toast { width:calc(100% - 30px); bottom:84px; justify-content:center; text-align:center; }
 }
 
+.training-empty { padding:24px; text-align:center; color:var(--muted); }
+.training-create,.training-editor { padding:24px; display:grid; gap:16px; }
+.training-create { grid-template-columns:minmax(0,1fr) auto; align-items:end; }
+.training-create label,.training-editor>label,.training-question-editor>label { display:grid; gap:7px; font-weight:700; color:var(--text); }
+.training-create input,.training-editor input,.training-editor textarea { width:100%; border:1px solid var(--line); background:var(--surface); color:var(--text); border-radius:12px; padding:11px 13px; font:inherit; }
+.training-editor textarea { min-height:92px; resize:vertical; }
+.training-policy { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.training-policy label { display:grid; gap:7px; font-size:.85rem; }
+.file-button { border:1px dashed var(--line); border-radius:14px; padding:14px; cursor:pointer; }
+.file-button input { margin-top:8px; }
+.training-question-editor,.training-question { border:1px solid var(--line); border-radius:14px; padding:16px; display:grid; gap:11px; }
+.training-question label,.training-question-editor>label:has(input[type="radio"]) { display:flex; align-items:center; gap:9px; font-weight:500; }
+.training-question input[type="radio"],.training-question-editor input[type="radio"],.training-driver-list input { width:auto; }
+.training-video { width:100%; max-height:68vh; background:#05070a; border-radius:14px; }
+.training-driver-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.training-driver-list label { display:flex; gap:8px; align-items:center; }
+.training-report { overflow:auto; border:1px solid var(--line); border-radius:14px; }
+.training-report>div { min-width:600px; display:grid; grid-template-columns:2fr repeat(3,1fr); gap:12px; padding:11px 14px; border-bottom:1px solid var(--line); }
+.training-report>div:last-child { border-bottom:0; }
+.training-success { color:var(--success); font-weight:800; }
+
+@media (max-width:700px) {
+  .training-create,.training-policy { grid-template-columns:1fr; }
+  .training-create .primary-button { width:100%; }
+  .training-editor { padding:18px 14px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,*:before,*:after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; }
 }

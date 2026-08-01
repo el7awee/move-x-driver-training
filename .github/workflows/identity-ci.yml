@@ -23,4 +23,5 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
+      - run: npm run test:d1-local
       - run: npm run build
