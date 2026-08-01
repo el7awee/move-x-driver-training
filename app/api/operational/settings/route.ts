@@ -1,0 +1,4 @@
+import { operationalError, operationalStore, requireAdmin } from "../_shared";
+import { validTripsFormUrl } from "@/lib/operational/core";
+export async function GET(request:Request){try{await requireAdmin(request);return Response.json({settings:await(await operationalStore()).settings()});}catch(e){return operationalError(e)}}
+export async function PATCH(request:Request){try{const current=await requireAdmin(request);const p=await request.json() as Record<string,string>;p.company_name=p.company_name?.trim();if(!p.company_name||p.company_name.length>120||!['ar','en'].includes(p.default_language)||p.timezone!=="Africa/Cairo"||!['true','false'].includes(p.show_trips_button)||!validTripsFormUrl(p.trips_form_url??""))throw new Error("invalid_settings");await(await operationalStore()).updateSettings(p,current.context.user.id);return Response.json({ok:true});}catch(e){return operationalError(e)}}

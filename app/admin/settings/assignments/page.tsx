@@ -1,0 +1,2 @@
+import { OperationalShell, PageTitle } from "@/components/operational-shell";import { AssignmentManager } from "@/components/operational-managers";import { requirePageRole } from "@/lib/operational/server-auth";
+export default async function AssignmentsPage(){const c=await requirePageRole(["system_admin"]);return <OperationalShell role={c.user.role} name={c.user.displayName}><PageTitle title="تخصيص السيارات" subtitle="تخصيص واحد نشط لكل سائق ولكل سيارة مع الاحتفاظ بالتاريخ."/><AssignmentManager/></OperationalShell>}

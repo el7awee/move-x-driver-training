@@ -111,12 +111,12 @@ test("unmount cancellation finishes silently so callers do not update state", as
   assert.deepEqual(await resultPromise, { status: "cancelled" });
 });
 
-test("page keeps retry guarded and does not reload the browser", async () => {
+test("login stays usable while session restoration runs and never reloads the browser", async () => {
   const source = await import("node:fs/promises").then(({ readFile }) =>
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/login-form.tsx", import.meta.url), "utf8"),
   );
-
-  assert.match(source, /if \(restoreInFlight\.current \|\| authState === "loading"\) return;/);
-  assert.match(source, /if \(!active \|\| result\.status === "cancelled"\) return;/);
+  assert.match(source, /<form onSubmit=/);
+  assert.match(source, /fetch\('\/api\/auth\/me'/);
   assert.doesNotMatch(source, /location\.reload/);
+  assert.doesNotMatch(source, /authState === "loading"/);
 });

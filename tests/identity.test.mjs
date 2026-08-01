@@ -385,12 +385,12 @@ test("maps profile fields from the authenticated session", async () => {
   });
 });
 
-test("binds the profile UI to the restored authenticated user", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.match(source, /value=\{user\.loginCode\}/);
-  assert.match(source, /value=\{user\.email\?\?/);
-  assert.match(source, /value=\{user\.phone\?\?/);
-  assert.match(source, /user\.biometricStatus/);
+test("binds the driver UI to the server-restored authenticated user", async () => {
+  const source = await readFile(new URL("../app/driver/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /requirePageRole\(\["driver"\]\)/);
+  assert.match(source, /c\.user\.displayName/);
+  assert.match(source, /c\.user\.loginCode/);
+  assert.match(source, /driverOverview\(c\.user\.id\)/);
   assert.equal(source.includes("محمد سعد"), false);
   assert.equal(source.includes("driver@example.com"), false);
 });
