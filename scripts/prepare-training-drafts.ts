@@ -36,7 +36,6 @@ if (!courses.length) throw new Error("Inventory contains no ready courses");
 
 const statements = [
   "PRAGMA foreign_keys = ON;",
-  "BEGIN TRANSACTION;",
 ];
 for (const course of courses) {
   if (!course.slug || !course.title || !course.document.questions.length) {
@@ -63,6 +62,5 @@ for (const course of courses) {
     ));
   }
 }
-statements.push("COMMIT;");
 await writeFile(outputPath, `${statements.join("\n\n")}\n`, { encoding: "utf8", mode: 0o600 });
 process.stdout.write(JSON.stringify({ preparedDrafts: courses.length, outputPath }));
