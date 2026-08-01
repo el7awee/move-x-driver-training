@@ -1,0 +1,2 @@
+import { OperationalShell, PageTitle } from "@/components/operational-shell";import { VehicleManager } from "@/components/operational-managers";import { requirePageRole } from "@/lib/operational/server-auth";
+export default async function VehiclesPage(){const c=await requirePageRole(["system_admin"]);return <OperationalShell role={c.user.role} name={c.user.displayName}><PageTitle title="إدارة السيارات" subtitle="إضافة السيارات وتحديث حالتها وأرشفتها دون حذف السجل."/><VehicleManager/></OperationalShell>}

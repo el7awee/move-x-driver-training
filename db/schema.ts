@@ -119,3 +119,40 @@ export const auditLogs = sqliteTable("audit_logs", {
   index("audit_logs_actor_idx").on(table.actorUserId, table.createdAt),
   index("audit_logs_module_idx").on(table.moduleKey, table.createdAt),
 ]);
+
+export const vehicles = sqliteTable("vehicles", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  internalCode: text("internal_code").notNull(),
+  plateNumber: text("plate_number").notNull(),
+  make: text("make").notNull(),
+  model: text("model").notNull(),
+  modelYear: integer("model_year"),
+  color: text("color"),
+  status: text("status", { enum: ["active", "maintenance", "inactive", "retired"] }).notNull().default("active"),
+  notes: text("notes").notNull().default(""),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("vehicles_internal_code_unique").on(table.internalCode),
+  uniqueIndex("vehicles_plate_number_unique").on(table.plateNumber),
+  index("vehicles_status_idx").on(table.status, table.updatedAt),
+]);
+
+export const vehicleAssignments = sqliteTable("vehicle_assignments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  driverUserId: integer("driver_user_id").notNull().references(() => users.id),
+  vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id),
+  assignedAt: text("assigned_at").notNull().default(currentIsoTimestamp),
+  unassignedAt: text("unassigned_at"),
+  status: text("status", { enum: ["active", "ended"] }).notNull().default("active"),
+  assignedByUserId: integer("assigned_by_user_id").notNull().references(() => users.id),
+}, (table) => [
+  index("vehicle_assignments_driver_history_idx").on(table.driverUserId, table.assignedAt),
+  index("vehicle_assignments_vehicle_history_idx").on(table.vehicleId, table.assignedAt),
+]);
+
+export const systemSettings = sqliteTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+  updatedAt: text("updated_at").notNull().default(currentIsoTimestamp),
+});

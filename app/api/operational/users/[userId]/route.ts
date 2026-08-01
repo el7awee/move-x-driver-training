@@ -1,0 +1,5 @@
+import { IDENTITY_ROLES } from "@/lib/identity/core";
+import { normalizeOperationalStatus, validOptionalEmail } from "@/lib/operational/core";
+import { idFrom, operationalError, operationalStore, requireAdmin } from "../../_shared";
+type C={params:Promise<{userId:string}>};
+export async function PATCH(request:Request,{params}:C){try{const current=await requireAdmin(request);const id=idFrom((await params).userId);const p=await request.json() as Record<string,string>;const loginCode=(p.loginCode??"").trim().toUpperCase();const displayName=(p.displayName??"").trim();const email=p.email?.trim()||"";const role=p.role as typeof IDENTITY_ROLES[number];if(!/^[A-Z0-9_-]{3,24}$/.test(loginCode)||!displayName||displayName.length>160||!validOptionalEmail(email)||!IDENTITY_ROLES.includes(role))throw new Error("invalid_user");await (await operationalStore()).updateUser(id,{loginCode,displayName,email:email||null,phone:p.phone?.trim()||null,role,status:normalizeOperationalStatus(p.status)},current.context.user.id);return Response.json({ok:true});}catch(e){return operationalError(e)}}
