@@ -8,6 +8,7 @@ import {
   type PublicIdentityUser as IdentityUser,
 } from "@/lib/identity/core";
 import { restoreIdentitySession } from "@/lib/identity/client-session";
+import { TrainingWorkspace } from "@/components/training-workspace";
 
 type View =
   | "home"
@@ -455,8 +456,8 @@ export default function Home() {
         </header>
 
         <div className="content-area">
-          {view === "home" && <DriverHome t={t} go={go} progress={watchProgress} displayName={displayName}/>}
-          {view === "courses" && <Courses go={go} progress={watchProgress}/>} 
+          {view === "home" && <DriverHome t={t} go={go} displayName={displayName}/>}
+          {view === "courses" && <TrainingWorkspace manager={canViewAdmin} notify={setToast}/>}
           {view === "course" && <CourseDetail go={go} progress={watchProgress} playing={playing} setPlaying={setPlaying}/>} 
           {view === "quiz" && <Quiz go={go} questionIndex={questionIndex} setQuestionIndex={setQuestionIndex} answers={answers} answerQuestion={answerQuestion} nextQuestion={nextQuestion} finished={quizFinished} score={scorePercent}/>} 
           {view === "results" && <Results score={quizFinished ? scorePercent : 85}/>} 
@@ -472,7 +473,7 @@ export default function Home() {
   );
 }
 
-function DriverHome({t, go, progress, displayName}:{t:typeof labels.ar;go:(v:View)=>void;progress:number;displayName:string}) {
+function DriverHome({t, go, displayName}:{t:typeof labels.ar;go:(v:View)=>void;displayName:string}) {
   return <div className="page-stack">
     <section className="mobile-welcome"><span className="avatar large">{displayName.trim().charAt(0) || "؟"}</span><div><strong>مرحبًا يا {displayName}</strong><small>جاهز نكمل إنجازك؟</small></div></section>
     <section className="metrics-grid">
@@ -483,7 +484,7 @@ function DriverHome({t, go, progress, displayName}:{t:typeof labels.ar;go:(v:Vie
     </section>
     <section className="hero-course card">
       <div className="course-visual"><div className="road-art"><span className="truck">▰</span><span className="road"/><Icon name="shield"/></div><span className="priority-badge">مهمة</span></div>
-      <div className="course-info"><span className="section-kicker">الدورة المطلوبة الآن</span><h1>{course.title}</h1><p>{course.description}</p><div className="progress-row"><span>التقدم</span><strong>{progress}%</strong></div><div className="progress-track"><i style={{width:`${progress}%`}}/></div><div className="course-meta"><span><Icon name="clock"/>{course.duration}</span><span>الموعد النهائي: <b>{course.deadline}</b></span></div><button className="primary-button wide" onClick={()=>go("course")}>{progress ? t.continue : t.start}<Icon name="arrow"/></button></div>
+      <div className="course-info"><span className="section-kicker">التدريب المخصص لك</span><h1>دوراتك المعتمدة من Move X</h1><p>افتح قائمة الدورات لرؤية المحتوى المنشور والمخصص لحسابك فقط.</p><button className="primary-button wide" onClick={()=>go("courses")}>{t.courses}<Icon name="arrow"/></button></div>
     </section>
     <section className="home-split">
       <article className="trip-card card"><div className="card-icon"><Icon name="trip"/></div><div><span className="section-kicker">نشاطك اليومي</span><h2>سجّل رحلة اليوم</h2><p>افتح نموذج MOVE X الحالي وسجّل بيانات رحلتك ومرفقاتك.</p></div><button className="secondary-button" onClick={()=>go("trips")}>فتح النموذج <Icon name="arrow"/></button></article>
@@ -494,22 +495,6 @@ function DriverHome({t, go, progress, displayName}:{t:typeof labels.ar;go:(v:Vie
 
 function Metric({icon,label,value,tone}:{icon:string;label:string;value:string;tone:string}) {
   return <article className="metric-card card"><span className={`metric-icon ${tone}`}><Icon name={icon}/></span><div><span>{label}</span><strong>{value}</strong></div></article>;
-}
-
-function Courses({go,progress}:{go:(v:View)=>void;progress:number}) {
-  return <div className="page-stack"><PageHead title="دوراتي" subtitle="تابع الدورات المطلوبة والمكتملة في مكان واحد"/>
-    <div className="filter-row"><button className="active">الكل <b>10</b></button><button>جاري التنفيذ <b>1</b></button><button>لم تبدأ <b>2</b></button><button>مكتملة <b>7</b></button></div>
-    <div className="course-list">
-      <CourseCard title={course.title} status="جاري التنفيذ" progress={progress} priority="مهمة" go={go}/>
-      <CourseCard title="القيادة الاقتصادية وتقليل استهلاك الوقود" status="لم تبدأ" progress={0} priority="عادية" go={go}/>
-      <CourseCard title="التصرف الصحيح عند الحوادث والطوارئ" status="لم تبدأ" progress={0} priority="عاجلة" go={go}/>
-      <CourseCard title="التعامل الآمن مع العملاء" status="مكتملة" progress={100} priority="عادية" go={go}/>
-    </div>
-  </div>;
-}
-
-function CourseCard({title,status,progress,priority,go}:{title:string;status:string;progress:number;priority:string;go:(v:View)=>void}) {
-  return <article className="course-card card"><div className="mini-cover"><Icon name={progress===100?"check":"shield"}/><span className={`priority ${priority === "عاجلة" ? "urgent" : priority === "مهمة" ? "important" : "normal"}`}>{priority}</span></div><div className="course-card-body"><span className="status-label">{status}</span><h2>{title}</h2><div className="mini-meta"><span><Icon name="clock"/>18 دقيقة</span><span>3 دروس</span></div><div className="progress-track"><i style={{width:`${progress}%`}}/></div><div className="card-bottom"><span>{progress}% مكتمل</span><button onClick={()=>go("course")}>{progress===100?"مراجعة":"فتح الدورة"}<Icon name="arrow"/></button></div></div></article>;
 }
 
 function CourseDetail({go,progress,playing,setPlaying}:{go:(v:View)=>void;progress:number;playing:boolean;setPlaying:(v:boolean)=>void}) {
@@ -566,7 +551,7 @@ function Profile({user,previewRole,logout}:{user:IdentityUser|null;previewRole:"
 }
 
 function AdminDashboard({go,setToast}:{go:(v:View)=>void;setToast:(v:string)=>void}) {
-  return <div className="page-stack"><div className="page-head admin-head"><div><span className="section-kicker">نظرة عامة — يوليو 2026</span><h1>لوحة مشرف التدريب</h1><p>تابع الإنجاز والنتائج والسائقين الذين يحتاجون تدخلك.</p></div><button className="primary-button" onClick={()=>setToast("تم إنشاء مسودة دورة جديدة")}>+ إنشاء دورة</button></div><section className="metrics-grid admin-metrics"><Metric icon="user" label="إجمالي السائقين" value="30" tone="blue"/><Metric icon="chart" label="الإنجاز العام" value="72%" tone="cyan"/><Metric icon="check" label="نسبة النجاح" value="84%" tone="green"/><Metric icon="bell" label="يحتاجون متابعة" value="5" tone="violet"/></section><section className="admin-grid"><article className="performance-card card"><div className="card-title"><div><span className="section-kicker">الأداء العام</span><h2>تقدم التدريب هذا الشهر</h2></div><select><option>يوليو 2026</option></select></div><div className="bar-chart">{[44,58,52,68,72,81,76,86].map((h,i)=><div key={i}><i style={{height:`${h}%`}}/><span>{i+1}</span></div>)}</div><div className="chart-legend"><span><i className="blue-dot"/>نسبة الإنجاز</span><b>+14% عن الشهر السابق</b></div></article><article className="attention-card card"><div className="card-title"><div><span className="section-kicker">إجراء مطلوب</span><h2>سائقون يحتاجون متابعة</h2></div><button onClick={()=>go("results")}>عرض الكل</button></div>{[["أحمد سيد","استنفد المحاولات","عاجل"],["محمد حامد","متأخر عن الموعد","مهم"],["هاني محمود","لم يبدأ الدورة","متابعة"]].map(([name,reason,status],i)=><div className="driver-alert" key={name}><span className="avatar small">{name[0]}</span><div><b>{name}</b><small>{reason}</small></div><span className={`alert-status s${i}`}>{status}</span><button onClick={()=>setToast(`تم فتح ملف ${name}`)}><Icon name="arrow"/></button></div>)}</article></section><section className="admin-grid lower"><article className="course-status card"><div className="card-title"><div><span className="section-kicker">الدورات النشطة</span><h2>حالة التنفيذ</h2></div><button onClick={()=>go("courses")}>إدارة الدورات</button></div>{[[course.title,"24/30","80%"],["القيادة الاقتصادية","18/30","60%"],["الطوارئ والحوادث","11/30","37%"]].map(([title,people,percent])=><div className="course-progress-row" key={title}><div><b>{title}</b><span>{people} سائق</span></div><div className="progress-track"><i style={{width:percent}}/></div><strong>{percent}</strong></div>)}</article><article className="quick-actions card"><span className="section-kicker">إجراءات سريعة</span><h2>إدارة التدريب</h2><div><button onClick={()=>setToast("تم فتح استيراد Excel")}><Icon name="upload"/><span><b>استيراد السائقين</b><small>من الشيت أو Excel</small></span></button><button onClick={()=>setToast("تم فتح بنك الأسئلة")}><Icon name="book"/><span><b>بنك الأسئلة</b><small>إضافة وتصنيف الأسئلة</small></span></button><button onClick={()=>go("results")}><Icon name="chart"/><span><b>استخراج تقرير</b><small>Excel أو PDF</small></span></button></div></article></section></div>;
+  return <div className="page-stack"><div className="page-head admin-head"><div><span className="section-kicker">إدارة فعلية بصلاحيات الخادم</span><h1>لوحة مشرف التدريب</h1><p>أنشئ الدورات كمسودات، ارفع المحتوى، راجع الأسئلة ثم انشر وعيّن للسائقين.</p></div><button className="primary-button" onClick={()=>go("courses")}>إدارة الدورات</button></div><section className="metrics-grid admin-metrics"><Metric icon="book" label="المحتوى" value="D1" tone="blue"/><Metric icon="upload" label="الفيديو" value="R2" tone="cyan"/><Metric icon="shield" label="الصلاحيات" value="Server" tone="green"/><Metric icon="chart" label="التقارير" value="Live" tone="violet"/></section><section className="card training-empty"><h2>مسار العمل الآمن</h2><p>كل دورة تبدأ كمسودة ولا تظهر للسائقين قبل اكتمال الفيديو والأسئلة ونشرها يدويًا. التعيين والنتائج متاحان من صفحة إدارة الدورات.</p><button className="secondary-button" onClick={()=>{setToast("افتح إدارة الدورات لبدء مسودة");go("courses");}}>إنشاء أو مراجعة دورة</button></section></div>;
 }
 
 function PageHead({title,subtitle}:{title:string;subtitle:string}) {return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div></div>}

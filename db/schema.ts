@@ -119,3 +119,117 @@ export const auditLogs = sqliteTable("audit_logs", {
   index("audit_logs_actor_idx").on(table.actorUserId, table.createdAt),
   index("audit_logs_module_idx").on(table.moduleKey, table.createdAt),
 ]);
+
+export const courses = sqliteTable("courses", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  slug: text("slug").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  status: text("status", { enum: ["draft", "published", "archived"] }).notNull().default("draft"),
+  passPercentage: integer("pass_percentage").notNull().default(80),
+  maxAttempts: integer("max_attempts"),
+  quizUnlockPercentage: integer("quiz_unlock_percentage").notNull().default(80),
+  showExplanationsAfterSubmission: integer("show_explanations_after_submission", { mode: "boolean" }).notNull().default(true),
+  passMessage: text("pass_message").notNull().default(""),
+  retryMessage: text("retry_message").notNull().default(""),
+  videoSourceType: text("video_source_type", { enum: ["google_drive", "r2", "youtube", "external_url"] }).notNull().default("google_drive"),
+  videoSourceRef: text("video_source_ref"),
+  videoStatus: text("video_status", { enum: ["awaiting_google_drive_url", "ready"] }).notNull().default("awaiting_google_drive_url"),
+  videoObjectKey: text("video_object_key"),
+  videoFilename: text("video_filename"),
+  videoContentType: text("video_content_type"),
+  videoSizeBytes: integer("video_size_bytes"),
+  videoChecksum: text("video_checksum"),
+  videoDurationSeconds: integer("video_duration_seconds"),
+  videoCodec: text("video_codec"),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  publishedAt: text("published_at"),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("courses_slug_unique").on(table.slug),
+  index("courses_status_idx").on(table.status, table.createdAt),
+]);
+
+export const courseQuestions = sqliteTable("course_questions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  courseId: integer("course_id").notNull().references(() => courses.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  prompt: text("prompt").notNull(),
+  correctOptionIndex: integer("correct_option_index").notNull(),
+  explanation: text("explanation").notNull().default(""),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("course_questions_position_unique").on(table.courseId, table.position),
+  index("course_questions_course_idx").on(table.courseId),
+]);
+
+export const courseQuestionOptions = sqliteTable("course_question_options", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  questionId: integer("question_id").notNull().references(() => courseQuestions.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  label: text("label").notNull(),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("course_question_options_position_unique").on(table.questionId, table.position),
+]);
+
+export const courseAssignments = sqliteTable("course_assignments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  courseId: integer("course_id").notNull().references(() => courses.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  assignedByUserId: integer("assigned_by_user_id").notNull().references(() => users.id),
+  dueAt: text("due_at"),
+  status: text("status", { enum: ["assigned", "completed", "cancelled"] }).notNull().default("assigned"),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
+}, (table) => [
+  uniqueIndex("course_assignments_course_user_unique").on(table.courseId, table.userId),
+  index("course_assignments_user_idx").on(table.userId, table.status),
+]);
+
+export const courseProgress = sqliteTable("course_progress", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  courseId: integer("course_id").notNull().references(() => courses.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  videoSeconds: integer("video_seconds").notNull().default(0),
+  videoPercentage: integer("video_percentage").notNull().default(0),
+  completedAt: text("completed_at"),
+  updatedAt: text("updated_at").notNull().default(currentIsoTimestamp),
+}, (table) => [
+  uniqueIndex("course_progress_course_user_unique").on(table.courseId, table.userId),
+  index("course_progress_user_idx").on(table.userId, table.updatedAt),
+]);
+
+export const quizAttempts = sqliteTable("quiz_attempts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  courseId: integer("course_id").notNull().references(() => courses.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  attemptNumber: integer("attempt_number").notNull(),
+  scorePercentage: integer("score_percentage").notNull(),
+  passed: integer("passed", { mode: "boolean" }).notNull(),
+  submittedAt: text("submitted_at").notNull().default(currentIsoTimestamp),
+}, (table) => [
+  uniqueIndex("quiz_attempts_number_unique").on(table.courseId, table.userId, table.attemptNumber),
+  index("quiz_attempts_user_idx").on(table.userId, table.submittedAt),
+]);
+
+export const quizAnswers = sqliteTable("quiz_answers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  attemptId: integer("attempt_id").notNull().references(() => quizAttempts.id, { onDelete: "cascade" }),
+  questionId: integer("question_id").notNull().references(() => courseQuestions.id),
+  selectedOptionIndex: integer("selected_option_index").notNull(),
+  correct: integer("correct", { mode: "boolean" }).notNull(),
+}, (table) => [
+  uniqueIndex("quiz_answers_attempt_question_unique").on(table.attemptId, table.questionId),
+]);
+
+export const trainingNotifications = sqliteTable("training_notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  courseId: integer("course_id").references(() => courses.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["assigned", "due", "passed", "failed"] }).notNull(),
+  message: text("message").notNull(),
+  readAt: text("read_at"),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
+}, (table) => [
+  index("training_notifications_user_idx").on(table.userId, table.readAt, table.createdAt),
+]);
