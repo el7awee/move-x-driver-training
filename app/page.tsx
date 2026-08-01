@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   isIdentityPreviewEnabled,
   type BiometricStatus,
   type IdentityRole,
   type PublicIdentityUser as IdentityUser,
 } from "@/lib/identity/core";
+import { restoreIdentitySession } from "@/lib/identity/client-session";
 
 type View =
   | "home"
@@ -123,6 +124,7 @@ export default function Home() {
   const [previewRole, setPreviewRole] = useState<"driver" | "admin" | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [sessionError, setSessionError] = useState("");
+  const restoreInFlight = useRef(false);
   const [view, setView] = useState<View>("home");
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return "light";
@@ -157,41 +159,51 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
+    let active = true;
+
     async function restoreIdentity() {
+      restoreInFlight.current = true;
       setAuthState("loading");
       setSessionError("");
       try {
-        const response = await fetch("/api/auth/me", {
-          headers: { Accept: "application/json" },
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const data = await response.json() as { error?: string; user?: IdentityUser };
-        if (response.ok && data.user) {
-          setIdentityUser(data.user);
-          setLang(data.user.preferredLanguage);
-          setView(data.user.role === "driver" ? "home" : "admin");
+        const result = await restoreIdentitySession({ signal: controller.signal });
+        if (!active || result.status === "cancelled") return;
+
+        if (result.status === "authenticated") {
+          setIdentityUser(result.user);
+          setLang(result.user.preferredLanguage);
+          setView(result.user.role === "driver" ? "home" : "admin");
           setAuthState("authenticated");
           return;
         }
-        if (response.status === 401) {
+
+        if (result.status === "unauthenticated") {
           setIdentityUser(null);
           setAuthState("unauthenticated");
           return;
         }
+
         setIdentityUser(null);
-        setSessionError(data.error ?? "خدمة الهوية غير متاحة حاليًا.");
+        setSessionError(result.message);
         setAuthState("unavailable");
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setIdentityUser(null);
-        setSessionError("تعذر الاتصال بخدمة الهوية. تحقق من الاتصال وحاول مرة أخرى.");
-        setAuthState("unavailable");
+      } finally {
+        if (active) restoreInFlight.current = false;
       }
     }
     void restoreIdentity();
-    return () => controller.abort();
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [restoreAttempt]);
+
+  function retrySessionRestore() {
+    if (restoreInFlight.current || authState === "loading") return;
+    restoreInFlight.current = true;
+    setAuthState("loading");
+    setSessionError("");
+    setRestoreAttempt((value) => value + 1);
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -334,6 +346,7 @@ export default function Home() {
 
   if (authState === "loading" && !previewRole) {
     return <main className="identity-state-shell">
+      <noscript>يحتاج نظام Move X إلى تشغيل JavaScript لفتح صفحة تسجيل الدخول.</noscript>
       <section className="identity-state-card card" aria-live="polite">
         <Logo/>
         <span className="identity-spinner" aria-hidden="true"/>
@@ -350,7 +363,7 @@ export default function Home() {
         <span className="identity-state-icon"><Icon name="shield"/></span>
         <h1>خدمة الهوية غير متاحة</h1>
         <p>{sessionError}</p>
-        <button className="primary-button" onClick={()=>setRestoreAttempt((value)=>value+1)}>إعادة المحاولة</button>
+        <button className="primary-button" onClick={retrySessionRestore}>إعادة المحاولة</button>
         {PREVIEW_ENABLED && <div className="demo-actions">
           <span>معاينة تطويرية فقط</span>
           <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>

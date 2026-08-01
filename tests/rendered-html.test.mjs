@@ -9,6 +9,10 @@ test("production build renders the public MOVE X application shell", async () =>
   assert.match(html, /MOVE X/);
   assert.match(html, /جارٍ التحقق من الجلسة/);
   assert.match(html, /<main class="identity-state-shell">/);
+  assert.match(
+    html,
+    /يحتاج نظام Move X إلى تشغيل JavaScript لفتح صفحة تسجيل الدخول\./,
+  );
 });
 
 test("production build includes login and current-session API routes", async () => {
