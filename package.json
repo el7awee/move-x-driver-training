@@ -11,17 +11,20 @@
     "build": "next build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test:identity": "node --experimental-strip-types --test tests/identity.test.mjs tests/session-restoration.test.mjs",
+    "test:training": "node --experimental-strip-types --test tests/training-core.test.mjs",
     "test:config": "node --test tests/wrangler-config.test.mjs",
     "test:smoke": "npm run build && node --test tests/rendered-html.test.mjs",
-    "test:d1-local": "node --experimental-strip-types --test tests/local-d1.integration.mjs",
-    "test": "npm run test:identity && npm run test:config && npm run test:smoke",
+    "test:d1-local": "node --experimental-strip-types --test tests/local-d1.integration.mjs tests/training-d1.integration.mjs",
+    "test": "npm run test:identity && npm run test:training && npm run test:config && npm run test:smoke",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
-    "identity:bootstrap": "node --experimental-strip-types scripts/bootstrap-identity.ts"
+    "identity:bootstrap": "node --experimental-strip-types scripts/bootstrap-identity.ts",
+    "training:inventory": "node --experimental-strip-types scripts/inventory-training-content.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
+    "fflate": "^0.8.2",
     "next": "16.2.11",
     "react": "19.2.6",
     "react-dom": "19.2.6"
