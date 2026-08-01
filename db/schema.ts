@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const currentIsoTimestamp = sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
 
@@ -143,11 +143,49 @@ export const vehicleAssignments = sqliteTable("vehicle_assignments", {
   vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id),
   assignedAt: text("assigned_at").notNull().default(currentIsoTimestamp),
   unassignedAt: text("unassigned_at"),
+  shiftType: text("shift_type", { enum: ["morning", "evening", "alternate", "flexible"] }).notNull().default("flexible"),
+  validFrom: text("valid_from"),
+  validTo: text("valid_to"),
+  assignmentType: text("assignment_type", { enum: ["primary", "regular", "replacement"] }).notNull().default("regular"),
   status: text("status", { enum: ["active", "ended"] }).notNull().default("active"),
   assignedByUserId: integer("assigned_by_user_id").notNull().references(() => users.id),
 }, (table) => [
+  uniqueIndex("vehicle_assignments_active_pair_unique").on(table.vehicleId, table.driverUserId).where(sql`${table.status} = 'active'`),
   index("vehicle_assignments_driver_history_idx").on(table.driverUserId, table.assignedAt),
   index("vehicle_assignments_vehicle_history_idx").on(table.vehicleId, table.assignedAt),
+]);
+
+export const vehicleCustodies = sqliteTable("vehicle_custodies", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id),
+  driverUserId: integer("driver_user_id").notNull().references(() => users.id),
+  startedAt: text("started_at").notNull().default(currentIsoTimestamp),
+  endedAt: text("ended_at"),
+  openedByUserId: integer("opened_by_user_id").notNull().references(() => users.id),
+  closedByUserId: integer("closed_by_user_id").references(() => users.id),
+}, (table) => [
+  uniqueIndex("vehicle_custodies_open_vehicle_unique").on(table.vehicleId).where(sql`${table.endedAt} IS NULL`),
+  index("vehicle_custodies_driver_history_idx").on(table.driverUserId, table.startedAt),
+]);
+
+export const vehicleHandovers = sqliteTable("vehicle_handovers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id),
+  fromDriverUserId: integer("from_driver_user_id").references(() => users.id),
+  toDriverUserId: integer("to_driver_user_id").notNull().references(() => users.id),
+  handedOverAt: text("handed_over_at").notNull(),
+  receivedAt: text("received_at").notNull(),
+  odometer: real("odometer"),
+  fuelLevel: integer("fuel_level"),
+  fuelNote: text("fuel_note").notNull().default(""),
+  vehicleCondition: text("vehicle_condition", { enum: ["good", "needs_attention", "damaged"] }).notNull().default("good"),
+  faultNotes: text("fault_notes").notNull().default(""),
+  generalNotes: text("general_notes").notNull().default(""),
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull().default(currentIsoTimestamp),
+}, (table) => [
+  index("vehicle_handovers_vehicle_history_idx").on(table.vehicleId, table.handedOverAt),
+  index("vehicle_handovers_driver_history_idx").on(table.toDriverUserId, table.receivedAt),
 ]);
 
 export const systemSettings = sqliteTable("system_settings", {
