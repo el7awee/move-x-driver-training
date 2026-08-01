@@ -3,7 +3,7 @@ import { OperationalStore } from "@/db/operational-store";
 import { OperationalShell, PageTitle } from "@/components/operational-shell";
 import { requirePageRole } from "@/lib/operational/server-auth";
 
-const shifts:Record<string,string>={morning:"صباحية",evening:"مسائية",alternate:"بديل",flexible:"مرنة"};
+const shifts:Record<string,string>={morning:"صباحية",evening:"مسائية",night:"ليلية",flexible:"مرنة"};
 
 export default async function DriverPage(){
   const c=await requirePageRole(["driver"]);

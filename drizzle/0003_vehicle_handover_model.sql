@@ -10,8 +10,10 @@ ALTER TABLE `vehicle_assignments` ADD COLUMN `assignment_type` text DEFAULT 'reg
 
 UPDATE `vehicle_assignments`
 SET `valid_from` = `assigned_at`,
-    `valid_to` = `unassigned_at`,
-    `assignment_type` = CASE WHEN `status` = 'active' THEN 'primary' ELSE 'regular' END;
+    `valid_to` = COALESCE(`unassigned_at`, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    `unassigned_at` = COALESCE(`unassigned_at`, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    `status` = 'ended',
+    `assignment_type` = 'regular';
 
 CREATE UNIQUE INDEX `vehicle_assignments_active_pair_unique`
   ON `vehicle_assignments` (`vehicle_id`,`driver_user_id`)

@@ -25,6 +25,7 @@ export const users = sqliteTable("users", {
 }, (table) => [
   uniqueIndex("users_login_code_unique").on(table.loginCode),
   uniqueIndex("users_email_unique").on(table.email),
+  uniqueIndex("users_phone_unique").on(table.phone),
   index("users_role_status_idx").on(table.role, table.status),
 ]);
 
@@ -34,6 +35,18 @@ export const driverProfiles = sqliteTable("driver_profiles", {
   employeeCode: text("employee_code").notNull(),
   licenseNumber: text("license_number"),
   licenseExpiresAt: text("license_expires_at"),
+  nationalIdHash: text("national_id_hash"),
+  nationalIdLast4: text("national_id_last4"),
+  licenseType: text("license_type"),
+  licenseIssuedAt: text("license_issued_at"),
+  hireDate: text("hire_date"),
+  primaryShift: text("primary_shift", { enum: ["morning", "evening", "night", "flexible"] }).notNull().default("flexible"),
+  location: text("location"),
+  employmentStatus: text("employment_status", { enum: ["active", "inactive", "on_leave", "terminated"] }).notNull().default("inactive"),
+  emergencyContactName: text("emergency_contact_name"),
+  emergencyContactPhone: text("emergency_contact_phone"),
+  notes: text("notes").notNull().default(""),
+  source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("legacy_unverified"),
   ...timestamps,
 }, (table) => [
   uniqueIndex("driver_profiles_user_unique").on(table.userId),
@@ -128,12 +141,24 @@ export const vehicles = sqliteTable("vehicles", {
   model: text("model").notNull(),
   modelYear: integer("model_year"),
   color: text("color"),
+  vin: text("vin"),
+  engineNumber: text("engine_number"),
+  fuelType: text("fuel_type"),
+  currentOdometer: real("current_odometer"),
+  vehicleLicenseNumber: text("vehicle_license_number"),
+  vehicleType: text("vehicle_type"),
+  registrationExpiresAt: text("registration_expires_at"),
+  insuranceExpiresAt: text("insurance_expires_at"),
+  insuranceCompany: text("insurance_company"),
+  location: text("location"),
+  source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("legacy_unverified"),
   status: text("status", { enum: ["active", "maintenance", "inactive", "retired"] }).notNull().default("active"),
   notes: text("notes").notNull().default(""),
   ...timestamps,
 }, (table) => [
   uniqueIndex("vehicles_internal_code_unique").on(table.internalCode),
   uniqueIndex("vehicles_plate_number_unique").on(table.plateNumber),
+  uniqueIndex("vehicles_vin_unique").on(table.vin),
   index("vehicles_status_idx").on(table.status, table.updatedAt),
 ]);
 
@@ -143,11 +168,12 @@ export const vehicleAssignments = sqliteTable("vehicle_assignments", {
   vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id),
   assignedAt: text("assigned_at").notNull().default(currentIsoTimestamp),
   unassignedAt: text("unassigned_at"),
-  shiftType: text("shift_type", { enum: ["morning", "evening", "alternate", "flexible"] }).notNull().default("flexible"),
+  shiftType: text("shift_type", { enum: ["morning", "evening", "night", "flexible"] }).notNull().default("flexible"),
   validFrom: text("valid_from"),
   validTo: text("valid_to"),
-  assignmentType: text("assignment_type", { enum: ["primary", "regular", "replacement"] }).notNull().default("regular"),
+  assignmentType: text("assignment_type", { enum: ["primary", "secondary", "backup"] }).notNull().default("secondary"),
   status: text("status", { enum: ["active", "ended"] }).notNull().default("active"),
+  source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("manual_admin"),
   assignedByUserId: integer("assigned_by_user_id").notNull().references(() => users.id),
 }, (table) => [
   uniqueIndex("vehicle_assignments_active_pair_unique").on(table.vehicleId, table.driverUserId).where(sql`${table.status} = 'active'`),
@@ -163,6 +189,7 @@ export const vehicleCustodies = sqliteTable("vehicle_custodies", {
   endedAt: text("ended_at"),
   openedByUserId: integer("opened_by_user_id").notNull().references(() => users.id),
   closedByUserId: integer("closed_by_user_id").references(() => users.id),
+  source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("legacy_unverified"),
 }, (table) => [
   uniqueIndex("vehicle_custodies_open_vehicle_unique").on(table.vehicleId).where(sql`${table.endedAt} IS NULL`),
   index("vehicle_custodies_driver_history_idx").on(table.driverUserId, table.startedAt),
@@ -183,6 +210,7 @@ export const vehicleHandovers = sqliteTable("vehicle_handovers", {
   generalNotes: text("general_notes").notNull().default(""),
   createdBy: integer("created_by").notNull().references(() => users.id),
   createdAt: text("created_at").notNull().default(currentIsoTimestamp),
+  source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("legacy_unverified"),
 }, (table) => [
   index("vehicle_handovers_vehicle_history_idx").on(table.vehicleId, table.handedOverAt),
   index("vehicle_handovers_driver_history_idx").on(table.toDriverUserId, table.receivedAt),

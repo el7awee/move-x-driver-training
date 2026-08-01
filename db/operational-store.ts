@@ -1,5 +1,5 @@
 import type { IdentityRole } from "../lib/identity/core.ts";
-import { publicOperationalStatus, type AssignmentType, type ShiftType, type VehicleCondition, type VehicleStatus } from "../lib/operational/core.ts";
+import { publicOperationalStatus, type AssignmentType, type EmploymentStatus, type ShiftType, type VehicleCondition, type VehicleStatus } from "../lib/operational/core.ts";
 
 interface Statement { bind(...values: unknown[]): Statement; all<T>(): Promise<{ results: T[] }>; first<T>(): Promise<T | null>; run(): Promise<{ meta?: { changes?: number } }>; }
 interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown[]>; }
@@ -11,7 +11,18 @@ export interface OperationalUserInput {
 
 export interface VehicleInput {
   internalCode: string; plateNumber: string; make: string; model: string;
-  modelYear: number | null; color: string | null; status: VehicleStatus; notes: string;
+  modelYear: number | null; color: string | null; vin: string | null; engineNumber:string|null; fuelType:string|null; currentOdometer:number|null;
+  vehicleLicenseNumber:string|null; vehicleType: string | null; registrationExpiresAt: string | null; insuranceExpiresAt: string | null;
+  insuranceCompany:string|null; location: string | null;
+  status: VehicleStatus; notes: string;
+}
+
+export interface DriverInput {
+  driverCode: string; fullName: string; phone: string; email: string | null;
+  nationalIdHash: string | null; nationalIdLast4: string | null;
+  licenseNumber: string | null; licenseType: string | null; licenseIssuedAt: string | null; licenseExpiresAt: string | null;
+  hireDate: string | null; primaryShift: ShiftType; location: string | null; employmentStatus: EmploymentStatus;
+  emergencyContactName: string | null; emergencyContactPhone: string | null; notes: string;
 }
 
 export interface DriverAuthorizationInput {
@@ -36,10 +47,10 @@ export class OperationalStore {
   async summary() {
     return this.db.prepare(`SELECT
       (SELECT COUNT(*) FROM users) AS users,
-      (SELECT COUNT(*) FROM users WHERE role='driver' AND status='active') AS drivers,
+      (SELECT COUNT(*) FROM users u JOIN driver_profiles p ON p.user_id=u.id WHERE u.role='driver' AND u.status='active' AND p.source='manual_admin') AS drivers,
       (SELECT COUNT(*) FROM users WHERE role='supervisor' AND status='active') AS supervisors,
-      (SELECT COUNT(*) FROM vehicles WHERE status!='retired') AS vehicles,
-      (SELECT COUNT(*) FROM vehicle_assignments WHERE status='active' AND (valid_from IS NULL OR valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND (valid_to IS NULL OR valid_to>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) AS assignments`).first<Record<string, number>>();
+      (SELECT COUNT(*) FROM vehicles WHERE status!='retired' AND source='manual_admin') AS vehicles,
+      (SELECT COUNT(*) FROM vehicle_assignments WHERE status='active' AND source='manual_admin' AND (valid_from IS NULL OR valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND (valid_to IS NULL OR valid_to>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) AS assignments`).first<Record<string, number>>();
   }
 
   async listUsers(search = "", role = "", status = "") {
@@ -61,17 +72,78 @@ export class OperationalStore {
   async activeAdminCount() { const row = await this.db.prepare("SELECT COUNT(*) AS value FROM users WHERE role='system_admin' AND status='active'").first<{ value: number }>(); return Number(row?.value ?? 0); }
 
   async createUser(input: OperationalUserInput & { passwordHash: string }, actorUserId: number) {
-    const row = await this.db.prepare(`INSERT INTO users
+    const statements: Statement[] = [this.db.prepare(`INSERT INTO users
       (login_code, display_name, email, phone, role, password_hash, must_change_password, status, preferred_language)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'ar') RETURNING id`).bind(
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'ar')`).bind(
       input.loginCode, input.displayName, input.email, input.phone, input.role, input.passwordHash, input.status,
-    ).first<{ id: number }>();
-    if (!row) throw new Error("User insert returned no row");
+    )];
     if (input.role === "driver") {
-      await this.db.prepare("INSERT INTO driver_profiles (user_id, employee_code) VALUES (?, ?)").bind(row.id, input.loginCode).run();
+      statements.push(this.db.prepare(`INSERT INTO driver_profiles (user_id,employee_code,employment_status,source)
+        SELECT id,?,'active','manual_admin' FROM users WHERE login_code=?`).bind(input.loginCode,input.loginCode));
     }
-    await this.writeAudit(actorUserId, "user.created", "user", String(row.id), "success", { role: input.role, status: input.status });
+    statements.push(this.db.prepare(`INSERT INTO audit_logs (actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
+      SELECT ?,'user.created','operational_admin','user',CAST(id AS TEXT),'success',? FROM users WHERE login_code=?`)
+      .bind(actorUserId,JSON.stringify({role:input.role,status:input.status,source:"manual_admin"}),input.loginCode));
+    await this.db.batch(statements);
+    const row=await this.db.prepare("SELECT id FROM users WHERE login_code=?").bind(input.loginCode).first<{id:number}>();
+    if(!row)throw new Error("user_not_found");
     return Number(row.id);
+  }
+
+  async listDrivers(search="", status="", shift="") {
+    const term=`%${search.trim()}%`;
+    const rows=await this.db.prepare(`SELECT u.id,u.login_code AS driver_code,u.display_name AS full_name,u.phone,u.email,u.status AS account_status,u.must_change_password,
+      p.national_id_last4,p.license_number,p.license_type,p.license_issued_at,p.license_expires_at,p.hire_date,p.primary_shift,p.location,
+      p.employment_status,p.emergency_contact_name,p.emergency_contact_phone,p.notes,p.created_at,p.updated_at
+      FROM driver_profiles p JOIN users u ON u.id=p.user_id
+      WHERE p.source='manual_admin' AND (?='' OR u.display_name LIKE ? OR u.login_code LIKE ? OR u.phone LIKE ?)
+      AND (?='' OR p.employment_status=?) AND (?='' OR p.primary_shift=?) ORDER BY u.display_name,u.id`)
+      .bind(search.trim(),term,term,term,status,status,shift,shift).all<Record<string,unknown>>();
+    return rows.results;
+  }
+
+  async createDriver(input: DriverInput & {passwordHash:string}, actorUserId:number) {
+    const accountStatus=input.employmentStatus==='active'?'active':'suspended';
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO users(login_code,display_name,email,phone,role,password_hash,must_change_password,status,preferred_language)
+        VALUES(?,?,?,?, 'driver',?,1,?,'ar')`).bind(input.driverCode,input.fullName,input.email,input.phone,input.passwordHash,accountStatus),
+      this.db.prepare(`INSERT INTO driver_profiles(user_id,employee_code,national_id_hash,national_id_last4,license_number,license_type,license_issued_at,license_expires_at,
+        hire_date,primary_shift,location,employment_status,emergency_contact_name,emergency_contact_phone,notes,source)
+        SELECT id,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual_admin' FROM users WHERE login_code=?`).bind(
+          input.driverCode,input.nationalIdHash,input.nationalIdLast4,input.licenseNumber,input.licenseType,input.licenseIssuedAt,input.licenseExpiresAt,
+          input.hireDate,input.primaryShift,input.location,input.employmentStatus,input.emergencyContactName,input.emergencyContactPhone,input.notes,input.driverCode),
+      this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
+        SELECT ?,'driver.created','operational_admin','driver',CAST(id AS TEXT),'success',? FROM users WHERE login_code=?`)
+        .bind(actorUserId,JSON.stringify({source:"manual_admin",employmentStatus:input.employmentStatus}),input.driverCode),
+    ]);
+    const row=await this.db.prepare("SELECT id FROM users WHERE login_code=?").bind(input.driverCode).first<{id:number}>();
+    if(!row)throw new Error("user_not_found");
+    return Number(row.id);
+  }
+
+  async updateDriver(id:number,input:DriverInput,actorUserId:number) {
+    const existing=await this.db.prepare(`SELECT u.id,p.national_id_hash,p.national_id_last4 FROM users u JOIN driver_profiles p ON p.user_id=u.id
+      WHERE u.id=? AND u.role='driver' AND p.source='manual_admin'`).bind(id).first<Record<string,unknown>>();
+    if(!existing)throw new Error("user_not_found");
+    const accountStatus=input.employmentStatus==='active'?'active':'suspended';
+    const nationalIdHash=input.nationalIdHash??(existing.national_id_hash?String(existing.national_id_hash):null);
+    const nationalIdLast4=input.nationalIdLast4??(existing.national_id_last4?String(existing.national_id_last4):null);
+    const statements=[
+      this.db.prepare(`UPDATE users SET login_code=?,display_name=?,email=?,phone=?,status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+        .bind(input.driverCode,input.fullName,input.email,input.phone,accountStatus,id),
+      this.db.prepare(`UPDATE driver_profiles SET employee_code=?,national_id_hash=?,national_id_last4=?,license_number=?,license_type=?,license_issued_at=?,license_expires_at=?,
+        hire_date=?,primary_shift=?,location=?,employment_status=?,emergency_contact_name=?,emergency_contact_phone=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=? AND source='manual_admin'`)
+        .bind(input.driverCode,nationalIdHash,nationalIdLast4,input.licenseNumber,input.licenseType,input.licenseIssuedAt,input.licenseExpiresAt,input.hireDate,input.primaryShift,input.location,input.employmentStatus,input.emergencyContactName,input.emergencyContactPhone,input.notes,id),
+      this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
+        VALUES(?,'driver.updated','operational_admin','driver',?,'success',?)`).bind(actorUserId,String(id),JSON.stringify({employmentStatus:input.employmentStatus})),
+    ];
+    if(accountStatus!=='active'){
+      const now=new Date().toISOString();
+      statements.push(this.db.prepare("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL").bind(now,id));
+      statements.push(this.db.prepare("UPDATE vehicle_assignments SET status='ended',valid_to=?,unassigned_at=? WHERE driver_user_id=? AND status='active'").bind(now,now,id));
+      statements.push(this.db.prepare("UPDATE vehicle_custodies SET ended_at=?,closed_by_user_id=? WHERE driver_user_id=? AND ended_at IS NULL").bind(now,actorUserId,id));
+    }
+    await this.db.batch(statements);
   }
 
   async updateUser(id: number, input: OperationalUserInput, actorUserId: number) {
@@ -110,7 +182,7 @@ export class OperationalStore {
     await this.db.prepare("UPDATE auth_sessions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=? AND revoked_at IS NULL").bind(userId).run();
   }
 
-  async listVehicles(search = "") {
+  async listVehicles(search = "", status = "", location = "") {
     const term = `%${search.trim()}%`;
     const rows = await this.db.prepare(`SELECT v.*,
       (SELECT GROUP_CONCAT(u.display_name, '، ') FROM vehicle_assignments a JOIN users u ON u.id=a.driver_user_id
@@ -119,23 +191,24 @@ export class OperationalStore {
        WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_name,
       (SELECT c.driver_user_id FROM vehicle_custodies c WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_user_id
       FROM vehicles v
-      WHERE (?='' OR v.internal_code LIKE ? OR v.plate_number LIKE ?) ORDER BY v.updated_at DESC`).bind(search.trim(), term, term).all<Record<string, unknown>>();
+      WHERE v.source='manual_admin' AND (?='' OR v.internal_code LIKE ? OR v.plate_number LIKE ? OR COALESCE(v.vin,'') LIKE ?)
+      AND (?='' OR v.status=?) AND (?='' OR v.location LIKE ?) ORDER BY v.updated_at DESC`).bind(search.trim(), term, term, term, status, status, location.trim(), `%${location.trim()}%`).all<Record<string, unknown>>();
     return rows.results;
   }
 
   async createVehicle(input: VehicleInput, actorUserId: number) {
-    const row = await this.db.prepare(`INSERT INTO vehicles (internal_code,plate_number,make,model,model_year,color,status,notes)
-      VALUES (?,?,?,?,?,?,?,?) RETURNING id`).bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.status,input.notes).first<{id:number}>();
+    const row = await this.db.prepare(`INSERT INTO vehicles (internal_code,plate_number,make,model,model_year,color,vin,engine_number,fuel_type,current_odometer,vehicle_license_number,vehicle_type,registration_expires_at,insurance_expires_at,insurance_company,location,status,notes,source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'manual_admin') RETURNING id`).bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,input.vehicleLicenseNumber,input.vehicleType,input.registrationExpiresAt,input.insuranceExpiresAt,input.insuranceCompany,input.location,input.status,input.notes).first<{id:number}>();
     if (!row) throw new Error("Vehicle insert returned no row");
     await this.writeAudit(actorUserId,"vehicle.created","vehicle",String(row.id),"success",{status:input.status});
     return Number(row.id);
   }
 
   async updateVehicle(id: number, input: VehicleInput, actorUserId: number) {
-    const existing = await this.db.prepare("SELECT id FROM vehicles WHERE id=?").bind(id).first();
+    const existing = await this.db.prepare("SELECT id FROM vehicles WHERE id=? AND source='manual_admin'").bind(id).first();
     if (!existing) throw new Error("vehicle_not_found");
-    await this.db.prepare(`UPDATE vehicles SET internal_code=?,plate_number=?,make=?,model=?,model_year=?,color=?,status=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
-      .bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.status,input.notes,id).run();
+    await this.db.prepare(`UPDATE vehicles SET internal_code=?,plate_number=?,make=?,model=?,model_year=?,color=?,vin=?,engine_number=?,fuel_type=?,current_odometer=?,vehicle_license_number=?,vehicle_type=?,registration_expires_at=?,insurance_expires_at=?,insurance_company=?,location=?,status=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND source='manual_admin'`)
+      .bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,input.vehicleLicenseNumber,input.vehicleType,input.registrationExpiresAt,input.insuranceExpiresAt,input.insuranceCompany,input.location,input.status,input.notes,id).run();
     if (input.status !== "active") await this.deactivateVehicleOperations(id, actorUserId);
     await this.writeAudit(actorUserId,"vehicle.updated","vehicle",String(id),"success",{status:input.status});
   }
@@ -147,19 +220,21 @@ export class OperationalStore {
         WHEN a.valid_to IS NOT NULL AND a.valid_to<=strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 'expired' ELSE 'active' END AS effective_status,
       u.display_name AS driver_name,u.login_code AS driver_code,v.internal_code,v.plate_number
       FROM vehicle_assignments a JOIN users u ON u.id=a.driver_user_id JOIN vehicles v ON v.id=a.vehicle_id
+      WHERE a.source='manual_admin' AND v.source='manual_admin'
       ORDER BY CASE WHEN a.status='active' THEN 0 ELSE 1 END,a.valid_from DESC,a.id DESC`).all<Record<string,unknown>>();
     return rows.results;
   }
 
   async authorizeDrivers(vehicleId: number, authorizations: DriverAuthorizationInput[], actorUserId: number) {
     if (!authorizations.length) throw new Error("invalid_assignment");
-    const vehicle = await this.db.prepare("SELECT id FROM vehicles WHERE id=? AND status='active'").bind(vehicleId).first();
+    const vehicle = await this.db.prepare("SELECT id FROM vehicles WHERE id=? AND status='active' AND source='manual_admin'").bind(vehicleId).first();
     if (!vehicle) throw new Error("vehicle_not_assignable");
     const uniqueDrivers = new Set(authorizations.map((item) => item.driverUserId));
     if (uniqueDrivers.size !== authorizations.length) throw new Error("invalid_assignment");
     const statements: Statement[] = [];
     for (const authorization of authorizations) {
-      const driver = await this.db.prepare("SELECT id FROM users WHERE id=? AND role='driver' AND status='active'").bind(authorization.driverUserId).first();
+      const driver = await this.db.prepare(`SELECT u.id FROM users u JOIN driver_profiles p ON p.user_id=u.id
+        WHERE u.id=? AND u.role='driver' AND u.status='active' AND p.employment_status='active' AND p.source='manual_admin'`).bind(authorization.driverUserId).first();
       if (!driver) throw new Error("invalid_driver");
       const existing = await this.db.prepare("SELECT id FROM vehicle_assignments WHERE vehicle_id=? AND driver_user_id=? AND status='active'")
         .bind(vehicleId, authorization.driverUserId).first<{id:number}>();
@@ -168,8 +243,8 @@ export class OperationalStore {
           WHERE id=?`).bind(authorization.shiftType,authorization.validFrom,authorization.validTo,authorization.assignmentType,existing.id));
       } else {
         statements.push(this.db.prepare(`INSERT INTO vehicle_assignments
-          (driver_user_id,vehicle_id,assigned_at,unassigned_at,shift_type,valid_from,valid_to,assignment_type,status,assigned_by_user_id)
-          VALUES (?,?,?,NULL,?,?,?,?, 'active',?)`).bind(authorization.driverUserId,vehicleId,authorization.validFrom,authorization.shiftType,authorization.validFrom,authorization.validTo,authorization.assignmentType,actorUserId));
+          (driver_user_id,vehicle_id,assigned_at,unassigned_at,shift_type,valid_from,valid_to,assignment_type,status,source,assigned_by_user_id)
+          VALUES (?,?,?,NULL,?,?,?,?, 'active','manual_admin',?)`).bind(authorization.driverUserId,vehicleId,authorization.validFrom,authorization.shiftType,authorization.validFrom,authorization.validTo,authorization.assignmentType,actorUserId));
       }
     }
     await this.db.batch(statements);
@@ -200,13 +275,13 @@ export class OperationalStore {
 
   async handoverVehicle(input: VehicleHandoverInput, actorUserId: number) {
     const now = new Date().toISOString();
-    const vehicle = await this.db.prepare("SELECT id,status FROM vehicles WHERE id=?").bind(input.vehicleId).first<Record<string,unknown>>();
+    const vehicle = await this.db.prepare("SELECT id,status FROM vehicles WHERE id=? AND source='manual_admin'").bind(input.vehicleId).first<Record<string,unknown>>();
     if (!vehicle) throw new Error("vehicle_not_found");
     if (vehicle.status !== "active") throw new Error("vehicle_not_handoverable");
     const recipient = await this.db.prepare(`SELECT a.id FROM vehicle_assignments a JOIN users u ON u.id=a.driver_user_id
       WHERE a.vehicle_id=? AND a.driver_user_id=? AND a.status='active'
       AND (a.valid_from IS NULL OR a.valid_from<=?) AND (a.valid_to IS NULL OR a.valid_to>?)
-      AND u.role='driver' AND u.status='active' LIMIT 1`)
+      AND a.source='manual_admin' AND u.role='driver' AND u.status='active' LIMIT 1`)
       .bind(input.vehicleId,input.toDriverUserId,now,now).first();
     if (!recipient) throw new Error("recipient_not_authorized");
     const current = await this.db.prepare("SELECT id,driver_user_id FROM vehicle_custodies WHERE vehicle_id=? AND ended_at IS NULL")
@@ -217,9 +292,9 @@ export class OperationalStore {
     if (current) statements.push(this.db.prepare("UPDATE vehicle_custodies SET ended_at=?,closed_by_user_id=? WHERE id=? AND ended_at IS NULL").bind(now,actorUserId,current.id));
     statements.push(
       this.db.prepare(`INSERT INTO vehicle_handovers
-        (vehicle_id,from_driver_user_id,to_driver_user_id,handed_over_at,received_at,odometer,fuel_level,fuel_note,vehicle_condition,fault_notes,general_notes,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(input.vehicleId,fromDriverUserId,input.toDriverUserId,now,now,input.odometer,input.fuelLevel,input.fuelNote,input.vehicleCondition,input.faultNotes,input.generalNotes,actorUserId),
-      this.db.prepare("INSERT INTO vehicle_custodies (vehicle_id,driver_user_id,started_at,opened_by_user_id) VALUES (?,?,?,?)").bind(input.vehicleId,input.toDriverUserId,now,actorUserId),
+        (vehicle_id,from_driver_user_id,to_driver_user_id,handed_over_at,received_at,odometer,fuel_level,fuel_note,vehicle_condition,fault_notes,general_notes,created_by,source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual_admin')`).bind(input.vehicleId,fromDriverUserId,input.toDriverUserId,now,now,input.odometer,input.fuelLevel,input.fuelNote,input.vehicleCondition,input.faultNotes,input.generalNotes,actorUserId),
+      this.db.prepare("INSERT INTO vehicle_custodies (vehicle_id,driver_user_id,started_at,opened_by_user_id,source) VALUES (?,?,?,?,'manual_admin')").bind(input.vehicleId,input.toDriverUserId,now,actorUserId),
       this.db.prepare(`INSERT INTO audit_logs (actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
         VALUES (?,'vehicle.handed_over','operational_admin','vehicle',?,'success',?)`).bind(actorUserId,String(input.vehicleId),JSON.stringify({fromDriverUserId,toDriverUserId:input.toDriverUserId})),
     );
@@ -232,7 +307,7 @@ export class OperationalStore {
       FROM vehicle_handovers h JOIN vehicles v ON v.id=h.vehicle_id
       LEFT JOIN users from_user ON from_user.id=h.from_driver_user_id
       JOIN users to_user ON to_user.id=h.to_driver_user_id JOIN users actor ON actor.id=h.created_by
-      WHERE (? IS NULL OR h.vehicle_id=?) ORDER BY h.handed_over_at DESC,h.id DESC`)
+      WHERE h.source='manual_admin' AND (? IS NULL OR h.vehicle_id=?) ORDER BY h.handed_over_at DESC,h.id DESC`)
       .bind(vehicleId??null,vehicleId??null).all<Record<string,unknown>>();
     return rows.results;
   }
@@ -246,7 +321,7 @@ export class OperationalStore {
       FROM vehicle_assignments a JOIN vehicles v ON v.id=a.vehicle_id
       LEFT JOIN vehicle_custodies c ON c.vehicle_id=v.id AND c.ended_at IS NULL
       LEFT JOIN users current_user ON current_user.id=c.driver_user_id
-      WHERE a.driver_user_id=? AND a.status='active'
+      WHERE a.driver_user_id=? AND a.status='active' AND a.source='manual_admin' AND v.source='manual_admin'
       AND (a.valid_from IS NULL OR a.valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND (a.valid_to IS NULL OR a.valid_to>strftime('%Y-%m-%dT%H:%M:%fZ','now')) ORDER BY a.assignment_type,a.valid_from`)
       .bind(userId,userId).all<Record<string,unknown>>();
@@ -255,7 +330,7 @@ export class OperationalStore {
       CASE WHEN h.to_driver_user_id=? THEN 'received' ELSE 'delivered' END AS direction
       FROM vehicle_handovers h JOIN vehicles v ON v.id=h.vehicle_id
       LEFT JOIN users from_user ON from_user.id=h.from_driver_user_id JOIN users to_user ON to_user.id=h.to_driver_user_id
-      WHERE h.from_driver_user_id=? OR h.to_driver_user_id=? ORDER BY h.handed_over_at DESC LIMIT 10`)
+      WHERE h.source='manual_admin' AND (h.from_driver_user_id=? OR h.to_driver_user_id=?) ORDER BY h.handed_over_at DESC LIMIT 10`)
       .bind(userId,userId,userId).all<Record<string,unknown>>();
     return {user,assignments:assignments.results,handovers:handovers.results};
   }
@@ -264,15 +339,15 @@ export class OperationalStore {
     const rows = await this.db.prepare(`SELECT v.id,v.internal_code,v.plate_number,v.status,
       (SELECT GROUP_CONCAT(u.display_name || ' (' || a.shift_type || ')', '، ')
        FROM vehicle_assignments a JOIN users u ON u.id=a.driver_user_id
-       WHERE a.vehicle_id=v.id AND a.status='active'
+       WHERE a.vehicle_id=v.id AND a.status='active' AND a.source='manual_admin'
        AND (a.valid_from IS NULL OR a.valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        AND (a.valid_to IS NULL OR a.valid_to>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) AS authorized_drivers,
       (SELECT u.display_name FROM vehicle_custodies c JOIN users u ON u.id=c.driver_user_id
        WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_name,
       (SELECT COALESCE(f.display_name,'بداية التشغيل') || ' ← ' || t.display_name || ' — ' || h.received_at
        FROM vehicle_handovers h LEFT JOIN users f ON f.id=h.from_driver_user_id JOIN users t ON t.id=h.to_driver_user_id
-       WHERE h.vehicle_id=v.id ORDER BY h.handed_over_at DESC,h.id DESC LIMIT 1) AS last_handover
-      FROM vehicles v WHERE v.status!='retired' ORDER BY v.internal_code`).all<Record<string,unknown>>();
+       WHERE h.vehicle_id=v.id AND h.source='manual_admin' ORDER BY h.handed_over_at DESC,h.id DESC LIMIT 1) AS last_handover
+      FROM vehicles v WHERE v.status!='retired' AND v.source='manual_admin' ORDER BY v.internal_code`).all<Record<string,unknown>>();
     return rows.results;
   }
 

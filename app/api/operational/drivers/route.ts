@@ -1,0 +1,6 @@
+import { hashPassword } from "@/lib/identity/core";
+import { generateTemporaryPassword, parseDriverInput, protectNationalId } from "@/lib/operational/core";
+import { operationalError, operationalStore, requireAdmin } from "../_shared";
+
+export async function GET(request:Request){try{await requireAdmin(request);const url=new URL(request.url);return Response.json({drivers:await(await operationalStore()).listDrivers(url.searchParams.get("q")??"",url.searchParams.get("status")??"",url.searchParams.get("shift")??"")});}catch(error){return operationalError(error)}}
+export async function POST(request:Request){try{const current=await requireAdmin(request);const input=parseDriverInput(await request.json() as Record<string,unknown>);const protectedId=await protectNationalId(input.nationalId);const temporaryPassword=generateTemporaryPassword();const id=await(await operationalStore()).createDriver({...input,nationalIdHash:protectedId?.hash??null,nationalIdLast4:protectedId?.last4??null,passwordHash:await hashPassword(temporaryPassword)},current.context.user.id);return Response.json({id,temporaryPassword},{status:201,headers:{"Cache-Control":"no-store"}});}catch(error){return operationalError(error)}}
