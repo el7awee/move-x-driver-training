@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  isIdentityPreviewEnabled,
+  type BiometricStatus,
+  type IdentityRole,
+  type PublicIdentityUser as IdentityUser,
+} from "@/lib/identity/core";
+import { restoreIdentitySession } from "@/lib/identity/client-session";
 
 type View =
   | "home"
@@ -13,6 +20,12 @@ type View =
   | "admin";
 type Theme = "light" | "dark";
 type Lang = "ar" | "en";
+type AuthState = "loading" | "unauthenticated" | "authenticated" | "unavailable";
+
+const PREVIEW_ENABLED = isIdentityPreviewEnabled(
+  process.env.NODE_ENV,
+  process.env.NEXT_PUBLIC_ENABLE_IDENTITY_PREVIEW,
+);
 
 const FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSdVMrtMiyQ2F2tYlv7XHjWWExJ_Y8FWvyBN_A-0ldqkokPnDg/viewform";
@@ -106,14 +119,29 @@ function Logo() {
 }
 
 export default function Home() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [role, setRole] = useState<"driver" | "admin">("driver");
+  const [authState, setAuthState] = useState<AuthState>("loading");
+  const [identityUser, setIdentityUser] = useState<IdentityUser | null>(null);
+  const [previewRole, setPreviewRole] = useState<"driver" | "admin" | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [sessionError, setSessionError] = useState("");
+  const restoreInFlight = useRef(false);
   const [view, setView] = useState<View>("home");
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    const savedTheme = window.localStorage.getItem("movex-theme") as Theme | null;
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+    const cairoHour = Number(
+      new Intl.DateTimeFormat("en-GB", {hour:"2-digit", hour12:false, timeZone:"Africa/Cairo"}).format(new Date())
+    );
+    return cairoHour >= 18 || cairoHour < 6 ? "dark" : "light";
+  });
   const [lang, setLang] = useState<Lang>("ar");
-  const [phone, setPhone] = useState("");
+  const [loginCode, setLoginCode] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [watchProgress, setWatchProgress] = useState(60);
   const [playing, setPlaying] = useState(false);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -121,17 +149,61 @@ export default function Home() {
   const [quizFinished, setQuizFinished] = useState(false);
   const [toast, setToast] = useState("");
   const t = labels[lang];
+  const role = previewRole ??
+    (identityUser ? (identityUser.role === "driver" ? "driver" : "admin") : "driver");
+  const loggedIn = Boolean(identityUser || previewRole);
+  const displayName = identityUser?.displayName ?? "وضع المعاينة";
+  const canViewAdmin = previewRole === "admin" ||
+    identityUser?.role === "supervisor" ||
+    identityUser?.role === "system_admin";
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("movex-theme") as Theme | null;
-    if (savedTheme) setTheme(savedTheme);
-    else {
-      const cairoHour = Number(
-        new Intl.DateTimeFormat("en-GB", {hour: "2-digit", hour12: false, timeZone: "Africa/Cairo"}).format(new Date())
-      );
-      setTheme(cairoHour >= 18 || cairoHour < 6 ? "dark" : "light");
+    const controller = new AbortController();
+    let active = true;
+
+    async function restoreIdentity() {
+      restoreInFlight.current = true;
+      setAuthState("loading");
+      setSessionError("");
+      try {
+        const result = await restoreIdentitySession({ signal: controller.signal });
+        if (!active || result.status === "cancelled") return;
+
+        if (result.status === "authenticated") {
+          setIdentityUser(result.user);
+          setLang(result.user.preferredLanguage);
+          setView(result.user.role === "driver" ? "home" : "admin");
+          setAuthState("authenticated");
+          return;
+        }
+
+        if (result.status === "unauthenticated") {
+          setIdentityUser(null);
+          setAuthState("unauthenticated");
+          return;
+        }
+
+        setIdentityUser(null);
+        setSessionError(result.message);
+        setAuthState("unavailable");
+      } finally {
+        if (active) restoreInFlight.current = false;
+      }
     }
-  }, []);
+    void restoreIdentity();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [restoreAttempt]);
+
+  function retrySessionRestore() {
+    if (restoreInFlight.current || authState === "loading") return;
+    restoreInFlight.current = true;
+    setAuthState("loading");
+    setSessionError("");
+    setRestoreAttempt((value) => value + 1);
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -154,29 +226,108 @@ export default function Home() {
 
   const greeting = useMemo(() => {
     const hour = Number(new Intl.DateTimeFormat("en-GB", {hour: "2-digit", hour12: false, timeZone: "Africa/Cairo"}).format(new Date()));
-    if (lang === "en") return hour < 12 ? "Good morning, Mohamed" : hour < 20 ? "Good evening, Mohamed" : "Good night, Mohamed";
-    return hour < 12 ? "صباح الخير يا محمد" : hour < 20 ? "مساء الخير يا محمد" : "ليلة سعيدة يا محمد";
-  }, [lang]);
+    if (lang === "en") return hour < 12 ? `Good morning, ${displayName}` : hour < 20 ? `Good evening, ${displayName}` : `Good night, ${displayName}`;
+    return hour < 12 ? `صباح الخير يا ${displayName}` : hour < 20 ? `مساء الخير يا ${displayName}` : `ليلة سعيدة يا ${displayName}`;
+  }, [lang, displayName]);
 
   const score = answers.reduce((sum, answer, index) => sum + (answer === questions[index]?.correct ? 1 : 0), 0);
   const scorePercent = Math.round((score / questions.length) * 100);
 
-  function handleLogin(nextRole: "driver" | "admin") {
-    if (phone && !/^01\d{9}$/.test(phone)) {
-      setLoginError("أدخل رقم هاتف مصري صحيح مكوّن من 11 رقمًا");
+  async function handleLogin() {
+    const normalizedCode = loginCode.trim().toUpperCase().replace(/\s+/g, "");
+    if (!/^[A-Z0-9_-]{3,24}$/.test(normalizedCode)) {
+      setLoginError("أدخل كود المستخدم الصحيح، مثال: TR004");
       return;
     }
-    if (password && password.length < 6) {
-      setLoginError("الرقم السري يجب ألا يقل عن 6 أرقام");
+    if (!password) {
+      setLoginError("أدخل كلمة السر");
       return;
     }
-    setRole(nextRole);
+    setLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({loginCode: normalizedCode, password}),
+      });
+      const data = await response.json() as {
+        error?: string;
+        user?: IdentityUser;
+      };
+      if (!response.ok || !data.user) {
+        setLoginError(data.error ?? "تعذر تسجيل الدخول");
+        return;
+      }
+      setIdentityUser(data.user);
+      setPreviewRole(null);
+      setLang(data.user.preferredLanguage);
+      setView(data.user.role === "driver" ? "home" : "admin");
+      setAuthState("authenticated");
+      setPassword("");
+      setLoginError("");
+    } catch {
+      setLoginError("تعذر الاتصال بالنظام الآن. تحقق من الإنترنت وحاول مرة أخرى.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  function handlePreview(nextRole: "driver" | "admin") {
+    if (!PREVIEW_ENABLED) return;
     setView(nextRole === "admin" ? "admin" : "home");
-    setLoggedIn(true);
+    setPreviewRole(nextRole);
+    setIdentityUser(null);
     setLoginError("");
   }
 
+  async function changeTemporaryPassword() {
+    setLoginError("");
+    if (newPassword.length < 8) {
+      setLoginError("كلمة السر الجديدة يجب ألا تقل عن 8 خانات");
+      return;
+    }
+    if (newPassword !== passwordConfirmation) {
+      setLoginError("تأكيد كلمة السر غير مطابق");
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password:newPassword, confirmation:passwordConfirmation}),
+      });
+      const data = await response.json() as {error?:string; user?:IdentityUser};
+      if (!response.ok || !data.user) {
+        setLoginError(data.error ?? "تعذر تغيير كلمة السر");
+        return;
+      }
+      setIdentityUser(data.user);
+      setNewPassword("");
+      setPasswordConfirmation("");
+      setToast("تم تغيير كلمة السر بنجاح");
+    } catch {
+      setLoginError("تعذر الاتصال بالنظام الآن.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function logout() {
+    try {
+      if (identityUser) await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setIdentityUser(null);
+      setPreviewRole(null);
+      setAuthState("unauthenticated");
+      setView("home");
+      setPassword("");
+      setLoginError("");
+    }
+  }
+
   function go(next: View) {
+    if (next === "admin" && !canViewAdmin) return;
     setView(next);
     window.scrollTo({top: 0, behavior: "smooth"});
   }
@@ -193,6 +344,35 @@ export default function Home() {
     else setQuizFinished(true);
   }
 
+  if (authState === "loading" && !previewRole) {
+    return <main className="identity-state-shell">
+      <noscript>يحتاج نظام Move X إلى تشغيل JavaScript لفتح صفحة تسجيل الدخول.</noscript>
+      <section className="identity-state-card card" aria-live="polite">
+        <Logo/>
+        <span className="identity-spinner" aria-hidden="true"/>
+        <h1>جارٍ التحقق من الجلسة</h1>
+        <p>نتأكد من هوية المستخدم قبل عرض بيانات MOVE X.</p>
+      </section>
+    </main>;
+  }
+
+  if (authState === "unavailable" && !previewRole) {
+    return <main className="identity-state-shell">
+      <section className="identity-state-card card" role="alert">
+        <Logo/>
+        <span className="identity-state-icon"><Icon name="shield"/></span>
+        <h1>خدمة الهوية غير متاحة</h1>
+        <p>{sessionError}</p>
+        <button className="primary-button" onClick={retrySessionRestore}>إعادة المحاولة</button>
+        {PREVIEW_ENABLED && <div className="demo-actions">
+          <span>معاينة تطويرية فقط</span>
+          <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>
+          <button onClick={()=>handlePreview("admin")}>معاينة كمشرف</button>
+        </div>}
+      </section>
+    </main>;
+  }
+
   if (!loggedIn) {
     return (
       <main className="login-shell">
@@ -205,18 +385,18 @@ export default function Home() {
             <h1>كل تدريبك ورحلاتك<br/>في مكان واحد</h1>
             <p>واجهة سهلة من الموبايل لمتابعة الدورات، الاختبارات والنتائج، والوصول السريع لنموذج الرحلات.</p>
           </div>
-          <form className="login-form" onSubmit={(e) => {e.preventDefault(); handleLogin("driver");}}>
-            <label>رقم الهاتف<input inputMode="tel" autoComplete="tel" placeholder="01xxxxxxxxx" value={phone} onChange={(e)=>setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}/></label>
-            <label>الرقم السري<input type="password" inputMode="numeric" autoComplete="current-password" placeholder="••••••" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>
+          <form className="login-form" onSubmit={(e) => {e.preventDefault(); void handleLogin();}}>
+            <label>كود المستخدم<input autoCapitalize="characters" autoComplete="username" placeholder="مثال: TR004" value={loginCode} onChange={(e)=>setLoginCode(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 24))}/></label>
+            <label>كلمة السر<input type="password" autoComplete="current-password" placeholder="••••••••" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>
             {loginError && <p className="form-error">{loginError}</p>}
-            <button className="primary-button" type="submit">دخول السائق <Icon name="arrow"/></button>
-            <button className="text-button" type="button">نسيت الرقم السري؟</button>
+            <button className="primary-button" type="submit" disabled={loginLoading}>{loginLoading ? "جارٍ التحقق..." : "دخول إلى MOVE X"} <Icon name="arrow"/></button>
+            <button className="text-button" type="button">نسيت كلمة السر؟ تواصل مع المشرف لإعادة تعيينها</button>
           </form>
-          <div className="demo-actions">
+          {PREVIEW_ENABLED && <div className="demo-actions">
             <span>للمراجعة قبل تفعيل الحسابات</span>
-            <button onClick={()=>handleLogin("driver")}>معاينة كسائق</button>
-            <button onClick={()=>handleLogin("admin")}>معاينة كمشرف</button>
-          </div>
+            <button onClick={()=>handlePreview("driver")}>معاينة كسائق</button>
+            <button onClick={()=>handlePreview("admin")}>معاينة كمشرف</button>
+          </div>}
         </section>
         <aside className="login-side">
           <div className="road-line" />
@@ -224,6 +404,27 @@ export default function Home() {
         </aside>
       </main>
     );
+  }
+
+  if (identityUser?.mustChangePassword) {
+    return <main className="login-shell password-reset-shell">
+      <section className="login-card password-reset-card">
+        <div className="login-brand"><Logo/><span>تأمين الحساب</span></div>
+        <div className="security-step"><span><Icon name="shield"/></span><div><b>أول دخول إلى حسابك</b><small>يجب تغيير كلمة السر المؤقتة قبل استخدام أي جزء من النظام.</small></div></div>
+        <div className="login-copy">
+          <span className="eyebrow">خطوة إلزامية لمرة واحدة</span>
+          <h1>أنشئ كلمة سر خاصة بك</h1>
+          <p>استخدم 8 خانات على الأقل ولا تُعِد استخدام كلمة السر المؤقتة.</p>
+        </div>
+        <form className="login-form" onSubmit={(event)=>{event.preventDefault();void changeTemporaryPassword();}}>
+          <label>كلمة السر الجديدة<input type="password" autoComplete="new-password" value={newPassword} onChange={(event)=>setNewPassword(event.target.value)}/></label>
+          <label>تأكيد كلمة السر<input type="password" autoComplete="new-password" value={passwordConfirmation} onChange={(event)=>setPasswordConfirmation(event.target.value)}/></label>
+          {loginError && <p className="form-error">{loginError}</p>}
+          <button className="primary-button" type="submit" disabled={loginLoading}>{loginLoading ? "جارٍ الحفظ..." : "حفظ ومتابعة"}<Icon name="arrow"/></button>
+        </form>
+      </section>
+      <aside className="login-side"><div className="road-line"/><div className="side-content"><Icon name="shield"/><strong>حسابك مسؤوليتك</strong><span>لن يستطيع المشرف رؤية كلمة السر الجديدة.</span></div></aside>
+    </main>;
   }
 
   const navItems = role === "admin" ? [
@@ -249,19 +450,19 @@ export default function Home() {
             <button className="round-button" onClick={()=>setLang(lang === "ar" ? "en" : "ar")} aria-label="تغيير اللغة">{lang === "ar" ? "EN" : "ع"}</button>
             <button className="round-button" onClick={()=>setTheme(theme === "light" ? "dark" : "light")} aria-label="تغيير الوضع"><Icon name={theme === "light" ? "moon" : "sun"}/></button>
             <button className="round-button notification-button" aria-label={t.notifications}><Icon name="bell"/><i>3</i></button>
-            <button className="avatar" onClick={()=>go("profile")} aria-label="الملف الشخصي">م</button>
+            <button className="avatar" onClick={()=>go("profile")} aria-label="الملف الشخصي">{displayName.trim().charAt(0) || "؟"}</button>
           </div>
         </header>
 
         <div className="content-area">
-          {view === "home" && <DriverHome t={t} go={go} progress={watchProgress}/>} 
+          {view === "home" && <DriverHome t={t} go={go} progress={watchProgress} displayName={displayName}/>}
           {view === "courses" && <Courses go={go} progress={watchProgress}/>} 
           {view === "course" && <CourseDetail go={go} progress={watchProgress} playing={playing} setPlaying={setPlaying}/>} 
           {view === "quiz" && <Quiz go={go} questionIndex={questionIndex} setQuestionIndex={setQuestionIndex} answers={answers} answerQuestion={answerQuestion} nextQuestion={nextQuestion} finished={quizFinished} score={scorePercent}/>} 
           {view === "results" && <Results score={quizFinished ? scorePercent : 85}/>} 
           {view === "trips" && <Trips/>}
-          {view === "profile" && <Profile role={role} setRole={(next)=>{setRole(next); go(next === "admin" ? "admin" : "home");}} setLoggedIn={setLoggedIn}/>} 
-          {view === "admin" && <AdminDashboard go={go} setToast={setToast}/>} 
+          {view === "profile" && <Profile user={identityUser} previewRole={previewRole} logout={logout}/>}
+          {view === "admin" && canViewAdmin && <AdminDashboard go={go} setToast={setToast}/>}
         </div>
 
         <nav className="bottom-nav">{navItems.map(([target, icon, label]) => <button key={target} className={view === target ? "active" : ""} onClick={()=>go(target as View)}><Icon name={icon}/><span>{label}</span></button>)}</nav>
@@ -271,9 +472,9 @@ export default function Home() {
   );
 }
 
-function DriverHome({t, go, progress}:{t:typeof labels.ar;go:(v:View)=>void;progress:number}) {
+function DriverHome({t, go, progress, displayName}:{t:typeof labels.ar;go:(v:View)=>void;progress:number;displayName:string}) {
   return <div className="page-stack">
-    <section className="mobile-welcome"><span className="avatar large">م</span><div><strong>مساء الخير يا محمد</strong><small>جاهز نكمل إنجازك؟</small></div></section>
+    <section className="mobile-welcome"><span className="avatar large">{displayName.trim().charAt(0) || "؟"}</span><div><strong>مرحبًا يا {displayName}</strong><small>جاهز نكمل إنجازك؟</small></div></section>
     <section className="metrics-grid">
       <Metric icon="book" label={t.required} value="3" tone="blue"/>
       <Metric icon="check" label={t.completed} value="7" tone="green"/>
@@ -334,8 +535,34 @@ function Trips() {
   return <div className="page-stack"><PageHead title="رحلاتي" subtitle="الوصول السريع إلى نموذج النشاط اليومي الحالي"/><section className="trip-access card"><div className="trip-access-copy"><span className="trip-big-icon"><Icon name="trip"/></span><div><span className="section-kicker">Google Form المعتمد</span><h1>تسجيل رحلة اليوم</h1><p>سيظل النموذج الحالي مسؤولًا عن إرسال بياناتك ومرفقاتك إلى Daily Activity Log دون أي تغيير.</p></div></div><div className="trip-actions"><button className="primary-button" onClick={()=>setShowForm(!showForm)}>{showForm?"إخفاء النموذج":"فتح داخل MOVE X"}<Icon name="arrow"/></button><a className="secondary-button" href={FORM_URL} target="_blank" rel="noreferrer">فتح النموذج مباشرة</a></div></section>{showForm&&<section className="form-frame card"><div className="frame-head"><span className="status-dot"/> النموذج الحالي — MOVE X<a href={FORM_URL} target="_blank" rel="noreferrer">فتح في نافذة جديدة</a></div><iframe title="نموذج تسجيل رحلات MOVE X" src={`${FORM_URL}?embedded=true`}>جار تحميل النموذج…</iframe></section>}<section className="info-strip"><Icon name="shield"/><div><b>بياناتك مستمرة في نفس المسار</b><span>الإرسال يتم من Google Form الحالي إلى تبويب Daily Activity Log كما هو الآن.</span></div></section></div>;
 }
 
-function Profile({role,setRole,setLoggedIn}:{role:"driver"|"admin";setRole:(v:"driver"|"admin")=>void;setLoggedIn:(v:boolean)=>void}) {
-  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والتفضيلات"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo">م<button><Icon name="upload"/></button></div><h2>محمد سعد</h2><span>سائق — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>رقم الهاتف<input value="01000000000" readOnly/></label><label>البريد الإلكتروني<input value="driver@example.com" readOnly/></label><label>اللغة المفضلة<select defaultValue="ar"><option value="ar">العربية</option><option value="en">English</option></select></label><div className="role-preview"><span>وضع المعاينة الحالي: <b>{role==="admin"?"مشرف":"سائق"}</b></span><button onClick={()=>setRole(role==="admin"?"driver":"admin")}>التبديل للمعاينة</button></div><button className="danger-button" onClick={()=>setLoggedIn(false)}>تسجيل الخروج</button></article></section></div>;
+function Profile({user,previewRole,logout}:{user:IdentityUser|null;previewRole:"driver"|"admin"|null;logout:()=>Promise<void>}) {
+  if (!user) {
+    return <div className="page-stack">
+      <PageHead title="وضع المعاينة" subtitle="المعاينة التطويرية لا تمثل حسابًا مصادقًا"/>
+      <section className="identity-state-card card">
+        <span className="identity-state-icon"><Icon name="shield"/></span>
+        <h2>لا توجد بيانات هوية في المعاينة</h2>
+        <p>الدور المعروض: {previewRole === "admin" ? "مشرف" : "سائق"}. لا تمنح المعاينة جلسة أو صلاحية لأي API محمي.</p>
+        <button className="danger-button" onClick={()=>void logout()}>إنهاء المعاينة</button>
+      </section>
+    </div>;
+  }
+
+  const roleLabels: Record<IdentityRole,string> = {
+    driver: "سائق",
+    supervisor: "مشرف",
+    system_admin: "مدير النظام",
+  };
+  const biometricLabels: Record<BiometricStatus,{label:string;note:string}> = {
+    not_enrolled: {label:"غير مسجل",note:"لم تُسجل هوية الوجه بعد."},
+    pending: {label:"قيد المراجعة",note:"تم التسجيل وينتظر اعتماد المشرف."},
+    approved: {label:"معتمد",note:"تم اعتماد هوية الوجه."},
+    rejected: {label:"مرفوض",note:"يحتاج التسجيل إلى إعادة المحاولة."},
+    revoked: {label:"ملغي",note:"تم إلغاء تسجيل هوية الوجه."},
+  };
+  const biometric = biometricLabels[user.biometricStatus];
+  const initial = user.displayName.trim().charAt(0) || "؟";
+  return <div className="page-stack"><PageHead title="حسابي" subtitle="بيانات الحساب والهوية الموثقة"/><section className="profile-grid"><article className="profile-card card"><div className="profile-photo" style={user.photoUrl?{backgroundImage:`url("${user.photoUrl}")`,backgroundSize:"cover",backgroundPosition:"center"}:undefined}>{user.photoUrl?"":initial}<button><Icon name="upload"/></button></div><h2>{user.displayName}</h2><span>{roleLabels[user.role]} — MOVE X</span><button className="secondary-button">طلب تغيير الصورة</button><div className="face-status"><span className="face-status-icon"><Icon name="shield"/></span><div><b>التحقق من الوجه</b><small>{biometric.note}</small></div><em>{biometric.label}</em></div></article><article className="settings-card card"><h2>بيانات الحساب</h2><label>كود المستخدم<input value={user.loginCode} readOnly/></label><label>البريد الإلكتروني<input value={user.email??"غير مسجل"} readOnly/></label><label>رقم الهاتف<input value={user.phone??"غير مسجل"} readOnly/></label><label>اللغة المفضلة<select value={user.preferredLanguage} disabled><option value="ar">العربية</option><option value="en">English</option></select></label><div className="identity-policy"><Icon name="shield"/><div><b>هوية واحدة لكل خدمات MOVE X</b><small>تأتي هذه البيانات من الجلسة المصادق عليها ولا تُحدد صلاحيات الخادم من الواجهة.</small></div></div><button className="danger-button" onClick={()=>void logout()}>تسجيل الخروج</button></article></section></div>;
 }
 
 function AdminDashboard({go,setToast}:{go:(v:View)=>void;setToast:(v:string)=>void}) {

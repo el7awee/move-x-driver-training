@@ -1,33 +1,40 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+const buildRoot = new URL("../.next/server/", import.meta.url);
 
-test("renders development preview metadata", async () => {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-
-  const response = await worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
-
-  assert.equal(response.status, 200);
+test("production build renders the public MOVE X application shell", async () => {
+  const html = await readFile(new URL("app/index.html", buildRoot), "utf8");
+  assert.match(html, /MOVE X/);
+  assert.match(html, /جارٍ التحقق من الجلسة/);
+  assert.match(html, /<main class="identity-state-shell">/);
   assert.match(
-    response.headers.get("content-type") ?? "",
-    /^text\/html\b/i,
+    html,
+    /يحتاج نظام Move X إلى تشغيل JavaScript لفتح صفحة تسجيل الدخول\./,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+});
+
+test("production build includes login and current-session API routes", async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL("app-paths-manifest.json", buildRoot), "utf8"),
+  );
+  assert.equal(manifest["/page"], "app/page.js");
+  assert.equal(manifest["/api/auth/login/route"], "app/api/auth/login/route.js");
+  assert.equal(manifest["/api/auth/me/route"], "app/api/auth/me/route.js");
+  assert.equal(
+    manifest["/api/auth/staging-authorization-check/route"],
+    "app/api/auth/staging-authorization-check/route.js",
+  );
+});
+
+test("production build keeps identity preview controls disabled", async () => {
+  const html = await readFile(new URL("app/index.html", buildRoot), "utf8");
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(html.includes("معاينة كسائق"), false);
+  assert.equal(html.includes("معاينة كمشرف"), false);
+  assert.match(
+    source,
+    /isIdentityPreviewEnabled\(\s*process\.env\.NODE_ENV,\s*process\.env\.NEXT_PUBLIC_ENABLE_IDENTITY_PREVIEW/,
+  );
 });
