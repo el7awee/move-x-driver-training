@@ -1,5 +1,5 @@
 import type { IdentityRole } from "../lib/identity/core.ts";
-import { publicOperationalStatus, type AssignmentType, type EmploymentStatus, type ShiftType, type VehicleCondition, type VehicleStatus } from "../lib/operational/core.ts";
+import { publicOperationalStatus, type AssignmentType, type CriminalRecordStatus, type DriverDocumentType, type DrivingLicenseStatus, type DrugTestStatus, type EmploymentStatus, type ShiftType, type VehicleCondition, type VehicleStatus } from "../lib/operational/core.ts";
 
 interface Statement { bind(...values: unknown[]): Statement; all<T>(): Promise<{ results: T[] }>; first<T>(): Promise<T | null>; run(): Promise<{ meta?: { changes?: number } }>; }
 interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown[]>; }
@@ -19,11 +19,17 @@ export interface VehicleInput {
 
 export interface DriverInput {
   driverCode: string; fullName: string; phone: string; email: string | null;
-  nationalIdHash: string | null; nationalIdLast4: string | null;
-  licenseNumber: string | null; licenseType: string | null; licenseIssuedAt: string | null; licenseExpiresAt: string | null;
-  hireDate: string | null; primaryShift: ShiftType; location: string | null; employmentStatus: EmploymentStatus;
+  secondaryPhone: string | null; dateOfBirth: string | null; address: string | null; branchOrLocation: string | null;
+  nationalIdEncrypted: string | null; nationalIdHash: string | null; nationalIdLast4: string | null;
+  drivingLicenseNumber: string | null; drivingLicenseType: string | null; drivingLicenseIssueDate: string | null; drivingLicenseExpiry: string | null;
+  drivingLicenseStatus: DrivingLicenseStatus; drivingLicenseNotes: string;
+  criminalRecordStatus: CriminalRecordStatus; criminalRecordIssueDate: string | null; criminalRecordExpiry: string | null; criminalRecordReference: string | null; criminalRecordNotes: string;
+  drugTestStatus: DrugTestStatus; drugTestDate: string | null; drugTestExpiry: string | null; drugTestLab: string | null; drugTestReference: string | null; drugTestNotes: string;
+  hireDate: string | null; primaryShift: ShiftType; employmentStatus: EmploymentStatus;
   emergencyContactName: string | null; emergencyContactPhone: string | null; notes: string;
 }
+
+export interface DriverDocumentInput { driverProfileId:number; documentType:DriverDocumentType; originalFilename:string; mimeType:string; fileSize:number; storageProvider:"google_drive"|"r2"; storageFileId:string|null; storageKey:string|null; issueDate:string|null; expiryDate:string|null; verificationStatus:"pending"|"verified"|"rejected"|"expired"; }
 
 export interface DriverAuthorizationInput {
   driverUserId: number; shiftType: ShiftType; assignmentType: AssignmentType;
@@ -90,28 +96,36 @@ export class OperationalStore {
     return Number(row.id);
   }
 
-  async listDrivers(search="", status="", shift="") {
+  async listDrivers(search="", status="", shift="", branch="", searchNationalIdHash:string|null=null) {
     const term=`%${search.trim()}%`;
-    const rows=await this.db.prepare(`SELECT u.id,u.login_code AS driver_code,u.display_name AS full_name,u.phone,u.email,u.status AS account_status,u.must_change_password,
-      p.national_id_last4,p.license_number,p.license_type,p.license_issued_at,p.license_expires_at,p.hire_date,p.primary_shift,p.location,
-      p.employment_status,p.emergency_contact_name,p.emergency_contact_phone,p.notes,p.created_at,p.updated_at
+    const rows=await this.db.prepare(`SELECT u.id,p.id AS driver_profile_id,u.login_code AS driver_code,u.display_name AS full_name,u.phone,u.email,u.status AS account_status,u.must_change_password,
+      p.national_id_last4,p.driving_license_number,p.driving_license_type,p.driving_license_issue_date,p.driving_license_expiry,p.driving_license_status,p.hire_date,p.primary_shift,p.branch_or_location,
+      p.employment_status,p.emergency_contact_name,p.emergency_contact_phone,p.notes,p.created_at,p.updated_at,
+      (SELECT COUNT(*) FROM driver_documents d WHERE d.driver_profile_id=p.id AND d.archived_at IS NULL) AS document_count,
+      (SELECT COUNT(*) FROM driver_documents d WHERE d.driver_profile_id=p.id AND d.archived_at IS NULL AND (d.verification_status IN ('rejected','expired') OR (d.expiry_date IS NOT NULL AND d.expiry_date<=date('now','+30 day')))) AS document_alert_count
       FROM driver_profiles p JOIN users u ON u.id=p.user_id
-      WHERE p.source='manual_admin' AND (?='' OR u.display_name LIKE ? OR u.login_code LIKE ? OR u.phone LIKE ?)
-      AND (?='' OR p.employment_status=?) AND (?='' OR p.primary_shift=?) ORDER BY u.display_name,u.id`)
-      .bind(search.trim(),term,term,term,status,status,shift,shift).all<Record<string,unknown>>();
+      WHERE p.source='manual_admin' AND (?='' OR u.display_name LIKE ? OR u.login_code LIKE ? OR u.phone LIKE ? OR p.national_id_hash=?)
+      AND (?='' OR p.employment_status=?) AND (?='' OR p.primary_shift=?) AND (?='' OR p.branch_or_location LIKE ?) ORDER BY u.display_name,u.id`)
+      .bind(search.trim(),term,term,term,searchNationalIdHash,status,status,shift,shift,branch.trim(),`%${branch.trim()}%`).all<Record<string,unknown>>();
     return rows.results;
   }
 
   async createDriver(input: DriverInput & {passwordHash:string}, actorUserId:number) {
-    const accountStatus=input.employmentStatus==='active'?'active':'suspended';
+    const accountStatus=['active','vacation'].includes(input.employmentStatus)?'active':'suspended';
     await this.db.batch([
       this.db.prepare(`INSERT INTO users(login_code,display_name,email,phone,role,password_hash,must_change_password,status,preferred_language)
         VALUES(?,?,?,?, 'driver',?,1,?,'ar')`).bind(input.driverCode,input.fullName,input.email,input.phone,input.passwordHash,accountStatus),
-      this.db.prepare(`INSERT INTO driver_profiles(user_id,employee_code,national_id_hash,national_id_last4,license_number,license_type,license_issued_at,license_expires_at,
-        hire_date,primary_shift,location,employment_status,emergency_contact_name,emergency_contact_phone,notes,source)
-        SELECT id,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual_admin' FROM users WHERE login_code=?`).bind(
-          input.driverCode,input.nationalIdHash,input.nationalIdLast4,input.licenseNumber,input.licenseType,input.licenseIssuedAt,input.licenseExpiresAt,
-          input.hireDate,input.primaryShift,input.location,input.employmentStatus,input.emergencyContactName,input.emergencyContactPhone,input.notes,input.driverCode),
+      this.db.prepare(`INSERT INTO driver_profiles(user_id,employee_code,secondary_phone,date_of_birth,address,branch_or_location,hire_date,primary_shift,employment_status,
+        emergency_contact_name,emergency_contact_phone,notes,national_id_encrypted,national_id_hash,national_id_last4,
+        driving_license_number,driving_license_type,driving_license_issue_date,driving_license_expiry,driving_license_status,driving_license_notes,
+        criminal_record_status,criminal_record_issue_date,criminal_record_expiry,criminal_record_reference,criminal_record_notes,
+        drug_test_status,drug_test_date,drug_test_expiry,drug_test_lab,drug_test_reference,drug_test_notes,source)
+        SELECT id,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual_admin' FROM users WHERE login_code=?`).bind(
+          input.driverCode,input.secondaryPhone,input.dateOfBirth,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
+          input.emergencyContactName,input.emergencyContactPhone,input.notes,input.nationalIdEncrypted,input.nationalIdHash,input.nationalIdLast4,
+          input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
+          input.criminalRecordStatus,input.criminalRecordIssueDate,input.criminalRecordExpiry,input.criminalRecordReference,input.criminalRecordNotes,
+          input.drugTestStatus,input.drugTestDate,input.drugTestExpiry,input.drugTestLab,input.drugTestReference,input.drugTestNotes,input.driverCode),
       this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
         SELECT ?,'driver.created','operational_admin','driver',CAST(id AS TEXT),'success',? FROM users WHERE login_code=?`)
         .bind(actorUserId,JSON.stringify({source:"manual_admin",employmentStatus:input.employmentStatus}),input.driverCode),
@@ -122,20 +136,28 @@ export class OperationalStore {
   }
 
   async updateDriver(id:number,input:DriverInput,actorUserId:number) {
-    const existing=await this.db.prepare(`SELECT u.id,p.national_id_hash,p.national_id_last4 FROM users u JOIN driver_profiles p ON p.user_id=u.id
+    const existing=await this.db.prepare(`SELECT u.id,p.national_id_encrypted,p.national_id_hash,p.national_id_last4 FROM users u JOIN driver_profiles p ON p.user_id=u.id
       WHERE u.id=? AND u.role='driver' AND p.source='manual_admin'`).bind(id).first<Record<string,unknown>>();
     if(!existing)throw new Error("user_not_found");
-    const accountStatus=input.employmentStatus==='active'?'active':'suspended';
+    const accountStatus=['active','vacation'].includes(input.employmentStatus)?'active':'suspended';
+    const nationalIdEncrypted=input.nationalIdEncrypted??(existing.national_id_encrypted?String(existing.national_id_encrypted):null);
     const nationalIdHash=input.nationalIdHash??(existing.national_id_hash?String(existing.national_id_hash):null);
     const nationalIdLast4=input.nationalIdLast4??(existing.national_id_last4?String(existing.national_id_last4):null);
     const statements=[
       this.db.prepare(`UPDATE users SET login_code=?,display_name=?,email=?,phone=?,status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
         .bind(input.driverCode,input.fullName,input.email,input.phone,accountStatus,id),
-      this.db.prepare(`UPDATE driver_profiles SET employee_code=?,national_id_hash=?,national_id_last4=?,license_number=?,license_type=?,license_issued_at=?,license_expires_at=?,
-        hire_date=?,primary_shift=?,location=?,employment_status=?,emergency_contact_name=?,emergency_contact_phone=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=? AND source='manual_admin'`)
-        .bind(input.driverCode,nationalIdHash,nationalIdLast4,input.licenseNumber,input.licenseType,input.licenseIssuedAt,input.licenseExpiresAt,input.hireDate,input.primaryShift,input.location,input.employmentStatus,input.emergencyContactName,input.emergencyContactPhone,input.notes,id),
+      this.db.prepare(`UPDATE driver_profiles SET employee_code=?,secondary_phone=?,date_of_birth=?,address=?,branch_or_location=?,hire_date=?,primary_shift=?,employment_status=?,
+        emergency_contact_name=?,emergency_contact_phone=?,notes=?,national_id_encrypted=?,national_id_hash=?,national_id_last4=?,
+        driving_license_number=?,driving_license_type=?,driving_license_issue_date=?,driving_license_expiry=?,driving_license_status=?,driving_license_notes=?,
+        criminal_record_status=?,criminal_record_issue_date=?,criminal_record_expiry=?,criminal_record_reference=?,criminal_record_notes=?,
+        drug_test_status=?,drug_test_date=?,drug_test_expiry=?,drug_test_lab=?,drug_test_reference=?,drug_test_notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=? AND source='manual_admin'`)
+        .bind(input.driverCode,input.secondaryPhone,input.dateOfBirth,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
+          input.emergencyContactName,input.emergencyContactPhone,input.notes,nationalIdEncrypted,nationalIdHash,nationalIdLast4,
+          input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
+          input.criminalRecordStatus,input.criminalRecordIssueDate,input.criminalRecordExpiry,input.criminalRecordReference,input.criminalRecordNotes,
+          input.drugTestStatus,input.drugTestDate,input.drugTestExpiry,input.drugTestLab,input.drugTestReference,input.drugTestNotes,id),
       this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
-        VALUES(?,'driver.updated','operational_admin','driver',?,'success',?)`).bind(actorUserId,String(id),JSON.stringify({employmentStatus:input.employmentStatus})),
+        VALUES(?,'driver.updated','operational_admin','driver',?,'success',?)`).bind(actorUserId,String(id),JSON.stringify({employmentStatus:input.employmentStatus,nationalIdChanged:input.nationalIdEncrypted!==null})),
     ];
     if(accountStatus!=='active'){
       const now=new Date().toISOString();
@@ -144,6 +166,71 @@ export class OperationalStore {
       statements.push(this.db.prepare("UPDATE vehicle_custodies SET ended_at=?,closed_by_user_id=? WHERE driver_user_id=? AND ended_at IS NULL").bind(now,actorUserId,id));
     }
     await this.db.batch(statements);
+  }
+
+  async getDriverProfile(userId:number) {
+    return this.db.prepare(`SELECT u.id AS user_id,p.id AS driver_profile_id,u.login_code AS driver_code,u.display_name AS full_name,u.phone,u.email,u.status AS account_status,u.must_change_password,
+      p.* FROM driver_profiles p JOIN users u ON u.id=p.user_id WHERE u.id=? AND u.role='driver' AND p.source='manual_admin'`).bind(userId).first<Record<string,unknown>>();
+  }
+
+  async setDriverEmploymentStatus(userId:number,status:EmploymentStatus,actorUserId:number) {
+    const profile=await this.getDriverProfile(userId);if(!profile)throw new Error("user_not_found");
+    const accountStatus=['active','vacation'].includes(status)?'active':'suspended';const statements:Statement[]=[
+      this.db.prepare("UPDATE driver_profiles SET employment_status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=?").bind(status,userId),
+      this.db.prepare("UPDATE users SET status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").bind(accountStatus,userId),
+    ];
+    if(accountStatus==='suspended'){const now=new Date().toISOString();statements.push(this.db.prepare("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL").bind(now,userId));statements.push(this.db.prepare("UPDATE vehicle_assignments SET status='ended',valid_to=?,unassigned_at=? WHERE driver_user_id=? AND status='active'").bind(now,now,userId));statements.push(this.db.prepare("UPDATE vehicle_custodies SET ended_at=?,closed_by_user_id=? WHERE driver_user_id=? AND ended_at IS NULL").bind(now,actorUserId,userId));}
+    await this.db.batch(statements);await this.writeAudit(actorUserId,status==='active'?"driver.reactivated":"driver.status_changed","driver",String(userId),"success",{employmentStatus:status});
+  }
+
+  async listDriverDocuments(driverProfileId:number) {
+    const rows=await this.db.prepare(`SELECT id,driver_profile_id,document_type,original_filename,mime_type,file_size,storage_provider,issue_date,expiry_date,verification_status,
+      verified_by,verified_at,rejection_reason,uploaded_by,uploaded_at,archived_at FROM driver_documents WHERE driver_profile_id=? ORDER BY archived_at IS NOT NULL,uploaded_at DESC,id DESC`).bind(driverProfileId).all<Record<string,unknown>>();
+    return rows.results;
+  }
+
+  async createDriverDocument(input:DriverDocumentInput,actorUserId:number) {
+    const profile=await this.db.prepare("SELECT id,user_id FROM driver_profiles WHERE id=? AND source='manual_admin'").bind(input.driverProfileId).first<Record<string,unknown>>();
+    if(!profile)throw new Error("user_not_found");
+    const row=await this.db.prepare(`INSERT INTO driver_documents(driver_profile_id,document_type,original_filename,mime_type,file_size,storage_provider,storage_file_id,storage_key,issue_date,expiry_date,verification_status,uploaded_by)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).bind(input.driverProfileId,input.documentType,input.originalFilename,input.mimeType,input.fileSize,input.storageProvider,input.storageFileId,input.storageKey,input.issueDate,input.expiryDate,input.verificationStatus,actorUserId).first<{id:number}>();
+    if(!row)throw new Error("document_insert_failed");
+    if(input.documentType==='profile_photo')await this.db.prepare("UPDATE driver_profiles SET profile_photo_document_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").bind(row.id,input.driverProfileId).run();
+    await this.writeAudit(actorUserId,"driver.document_uploaded","driver_document",String(row.id),"success",{driverProfileId:input.driverProfileId,documentType:input.documentType,mimeType:input.mimeType,fileSize:input.fileSize});
+    return Number(row.id);
+  }
+
+  async documentForDownload(documentId:number) { return this.db.prepare(`SELECT d.*,p.user_id FROM driver_documents d JOIN driver_profiles p ON p.id=d.driver_profile_id WHERE d.id=? AND d.archived_at IS NULL`).bind(documentId).first<Record<string,unknown>>(); }
+
+  async archiveDriverDocument(documentId:number,actorUserId:number) {
+    const document=await this.documentForDownload(documentId);if(!document)throw new Error("document_not_found");
+    await this.db.batch([
+      this.db.prepare("UPDATE driver_documents SET archived_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND archived_at IS NULL").bind(documentId),
+      this.db.prepare("UPDATE driver_profiles SET profile_photo_document_id=NULL WHERE profile_photo_document_id=?").bind(documentId),
+    ]);
+    await this.writeAudit(actorUserId,"driver.document_archived","driver_document",String(documentId),"success",{driverProfileId:document.driver_profile_id,documentType:document.document_type});
+  }
+
+  async reviewDriverDocument(documentId:number,status:"verified"|"rejected",rejectionReason:string|null,actorUserId:number) {
+    const document=await this.documentForDownload(documentId);if(!document)throw new Error("document_not_found");
+    await this.db.prepare(`UPDATE driver_documents SET verification_status=?,verified_by=?,verified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),rejection_reason=? WHERE id=? AND archived_at IS NULL`).bind(status,actorUserId,status==='rejected'?rejectionReason:null,documentId).run();
+    await this.writeAudit(actorUserId,"driver.document_reviewed","driver_document",String(documentId),"success",{driverProfileId:document.driver_profile_id,status});
+  }
+
+  async driverRelations(userId:number) {
+    const [assignments,handovers,audit]=await Promise.all([
+      this.db.prepare(`SELECT a.*,v.internal_code,v.plate_number,CASE WHEN c.driver_user_id=? THEN 1 ELSE 0 END AS has_custody FROM vehicle_assignments a JOIN vehicles v ON v.id=a.vehicle_id LEFT JOIN vehicle_custodies c ON c.vehicle_id=v.id AND c.ended_at IS NULL WHERE a.driver_user_id=? ORDER BY a.assigned_at DESC`).bind(userId,userId).all<Record<string,unknown>>(),
+      this.db.prepare(`SELECT h.*,v.internal_code,v.plate_number,f.display_name AS from_driver_name,t.display_name AS to_driver_name FROM vehicle_handovers h JOIN vehicles v ON v.id=h.vehicle_id LEFT JOIN users f ON f.id=h.from_driver_user_id JOIN users t ON t.id=h.to_driver_user_id WHERE h.from_driver_user_id=? OR h.to_driver_user_id=? ORDER BY h.handed_over_at DESC LIMIT 50`).bind(userId,userId).all<Record<string,unknown>>(),
+      this.db.prepare(`SELECT id,action,result,created_at FROM audit_logs WHERE (entity_type='driver' AND entity_id=?) OR (entity_type='driver_document' AND entity_id IN (SELECT CAST(d.id AS TEXT) FROM driver_documents d JOIN driver_profiles p ON p.id=d.driver_profile_id WHERE p.user_id=?)) ORDER BY id DESC LIMIT 100`).bind(String(userId),userId).all<Record<string,unknown>>(),
+    ]);
+    return {assignments:assignments.results,handovers:handovers.results,audit:audit.results};
+  }
+
+  async driverDirectoryForSupervisor() {
+    const rows=await this.db.prepare(`SELECT u.id,u.display_name AS full_name,u.login_code AS driver_code,u.phone,p.primary_shift,p.employment_status,p.branch_or_location,
+      p.driving_license_status,p.driving_license_expiry,p.criminal_record_status,p.criminal_record_expiry,p.drug_test_status,p.drug_test_expiry,
+      (SELECT COUNT(*) FROM driver_documents d WHERE d.driver_profile_id=p.id AND d.archived_at IS NULL) AS document_count
+      FROM driver_profiles p JOIN users u ON u.id=p.user_id WHERE p.source='manual_admin' ORDER BY u.display_name`).all<Record<string,unknown>>();return rows.results;
   }
 
   async updateUser(id: number, input: OperationalUserInput, actorUserId: number) {

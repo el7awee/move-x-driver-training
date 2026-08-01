@@ -4,13 +4,21 @@ export type OperationalUserStatus = "active" | "inactive";
 export type VehicleStatus = "active" | "maintenance" | "inactive" | "retired";
 export type ShiftType = "morning" | "evening" | "night" | "flexible";
 export type AssignmentType = "primary" | "secondary" | "backup";
-export type EmploymentStatus = "active" | "inactive" | "on_leave" | "terminated";
+export type EmploymentStatus = "active" | "vacation" | "suspended" | "resigned" | "terminated";
+export type DrivingLicenseStatus = "valid" | "expiring" | "expired" | "suspended";
+export type CriminalRecordStatus = "valid" | "pending" | "expired" | "rejected" | "not_provided";
+export type DrugTestStatus = "negative" | "positive" | "pending" | "expired" | "not_provided";
+export type DriverDocumentType = "profile_photo" | "national_id_front" | "national_id_back" | "driving_license_front" | "driving_license_back" | "criminal_record" | "drug_test" | "employment_document" | "other";
 export type VehicleCondition = "good" | "needs_attention" | "damaged";
 
 export const VEHICLE_STATUSES = ["active", "maintenance", "inactive", "retired"] as const;
 export const SHIFT_TYPES = ["morning", "evening", "night", "flexible"] as const;
 export const ASSIGNMENT_TYPES = ["primary", "secondary", "backup"] as const;
-export const EMPLOYMENT_STATUSES = ["active", "inactive", "on_leave", "terminated"] as const;
+export const EMPLOYMENT_STATUSES = ["active", "vacation", "suspended", "resigned", "terminated"] as const;
+export const DRIVING_LICENSE_STATUSES = ["valid", "expiring", "expired", "suspended"] as const;
+export const CRIMINAL_RECORD_STATUSES = ["valid", "pending", "expired", "rejected", "not_provided"] as const;
+export const DRUG_TEST_STATUSES = ["negative", "positive", "pending", "expired", "not_provided"] as const;
+export const DRIVER_DOCUMENT_TYPES = ["profile_photo", "national_id_front", "national_id_back", "driving_license_front", "driving_license_back", "criminal_record", "drug_test", "employment_document", "other"] as const;
 export const VEHICLE_CONDITIONS = ["good", "needs_attention", "damaged"] as const;
 
 export function destinationForRole(role: IdentityRole) {
@@ -95,29 +103,31 @@ export function parseDriverInput(p: Record<string, unknown>) {
   const primaryShift = String(p.primaryShift ?? "flexible") as ShiftType;
   const employmentStatus = String(p.employmentStatus ?? "active") as EmploymentStatus;
   const nationalId = String(p.nationalId ?? "").trim();
+  const drivingLicenseStatus = String(p.drivingLicenseStatus ?? "expired") as DrivingLicenseStatus;
+  const criminalRecordStatus = String(p.criminalRecordStatus ?? "not_provided") as CriminalRecordStatus;
+  const drugTestStatus = String(p.drugTestStatus ?? "not_provided") as DrugTestStatus;
+  const secondaryPhone = String(p.secondaryPhone ?? "").trim();
   if (!/^[A-Z0-9_-]{3,24}$/.test(driverCode) || !fullName || fullName.length > 160 || !/^\+?[0-9 ()-]{7,24}$/.test(phone) ||
     !validOptionalEmail(email) || !SHIFT_TYPES.includes(primaryShift) || !EMPLOYMENT_STATUSES.includes(employmentStatus) ||
-    (nationalId && !/^[0-9]{8,20}$/.test(nationalId))) throw new Error("invalid_driver_profile");
+    !DRIVING_LICENSE_STATUSES.includes(drivingLicenseStatus) || !CRIMINAL_RECORD_STATUSES.includes(criminalRecordStatus) || !DRUG_TEST_STATUSES.includes(drugTestStatus) ||
+    (nationalId && !/^[0-9]{8,20}$/.test(nationalId)) || (secondaryPhone && !/^\+?[0-9 ()-]{7,24}$/.test(secondaryPhone))) throw new Error("invalid_driver_profile");
   return {
     driverCode, fullName, phone, email: email || null, nationalId: nationalId || null,
-    licenseNumber: optionalText(p.licenseNumber, 80), licenseType: optionalText(p.licenseType, 80),
-    licenseIssuedAt: optionalDate(p.licenseIssuedAt, "invalid_driver_profile"),
-    licenseExpiresAt: optionalDate(p.licenseExpiresAt, "invalid_driver_profile"),
-    hireDate: optionalDate(p.hireDate, "invalid_driver_profile"), primaryShift, location: optionalText(p.location, 160),
+    secondaryPhone: secondaryPhone || null, dateOfBirth: optionalDate(p.dateOfBirth, "invalid_driver_profile"), address: optionalText(p.address, 500),
+    branchOrLocation: optionalText(p.branchOrLocation ?? p.location, 160),
+    drivingLicenseNumber: optionalText(p.drivingLicenseNumber ?? p.licenseNumber, 80), drivingLicenseType: optionalText(p.drivingLicenseType ?? p.licenseType, 80),
+    drivingLicenseIssueDate: optionalDate(p.drivingLicenseIssueDate ?? p.licenseIssuedAt, "invalid_driver_profile"),
+    drivingLicenseExpiry: optionalDate(p.drivingLicenseExpiry ?? p.licenseExpiresAt, "invalid_driver_profile"), drivingLicenseStatus,
+    drivingLicenseNotes: String(p.drivingLicenseNotes ?? "").trim().slice(0, 2000),
+    criminalRecordStatus, criminalRecordIssueDate: optionalDate(p.criminalRecordIssueDate, "invalid_driver_profile"),
+    criminalRecordExpiry: optionalDate(p.criminalRecordExpiry, "invalid_driver_profile"), criminalRecordReference: optionalText(p.criminalRecordReference, 160),
+    criminalRecordNotes: String(p.criminalRecordNotes ?? "").trim().slice(0, 2000),
+    drugTestStatus, drugTestDate: optionalDate(p.drugTestDate, "invalid_driver_profile"), drugTestExpiry: optionalDate(p.drugTestExpiry ?? p.nextTestDue, "invalid_driver_profile"),
+    drugTestLab: optionalText(p.drugTestLab, 160), drugTestReference: optionalText(p.drugTestReference, 160), drugTestNotes: String(p.drugTestNotes ?? "").trim().slice(0, 2000),
+    hireDate: optionalDate(p.hireDate, "invalid_driver_profile"), primaryShift,
     employmentStatus, emergencyContactName: optionalText(p.emergencyContactName, 160),
     emergencyContactPhone: optionalText(p.emergencyContactPhone, 24), notes: String(p.notes ?? "").trim().slice(0, 2000),
   };
-}
-
-export async function protectNationalId(value: string | null) {
-  if (!value) return null;
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const encoded = new TextEncoder().encode(value);
-  const payload = new Uint8Array(salt.length + encoded.length);
-  payload.set(salt); payload.set(encoded, salt.length);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
-  const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return { hash: `${hex(salt)}:${hex(digest)}`, last4: value.slice(-4) };
 }
 
 function optionalIso(value: unknown) {

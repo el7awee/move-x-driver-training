@@ -1,0 +1,4 @@
+import { driverDataProtectionKey, revealNationalId } from "@/lib/operational/driver-security";
+import { idFrom, operationalError, operationalStore, requireAdmin } from "../../../_shared";
+type Context={params:Promise<{driverId:string}>};
+export async function POST(request:Request,{params}:Context){try{const current=await requireAdmin(request);const id=idFrom((await params).driverId);const store=await operationalStore();const profile=await store.getDriverProfile(id);if(!profile)throw new Error("user_not_found");if(!profile.national_id_encrypted)return Response.json({nationalId:null},{headers:{"Cache-Control":"no-store"}});const nationalId=await revealNationalId(String(profile.national_id_encrypted),await driverDataProtectionKey());await store.writeAudit(current.context.user.id,"driver.national_id_revealed","driver",String(id));return Response.json({nationalId},{headers:{"Cache-Control":"no-store"}});}catch(error){return operationalError(error)}}

@@ -1,0 +1,4 @@
+import { DriverProfileDetails } from "@/components/driver-profile-details";
+import { OperationalShell, PageTitle } from "@/components/operational-shell";
+import { requirePageRole } from "@/lib/operational/server-auth";
+export default async function DriverDetailsPage({params}:{params:Promise<{driverId:string}>}){const current=await requirePageRole(["system_admin"]);const driverId=Number((await params).driverId);const now=new Date();const today=now.toISOString().slice(0,10);now.setUTCDate(now.getUTCDate()+30);const soon=now.toISOString().slice(0,10);return <OperationalShell role={current.user.role} name={current.user.displayName}><PageTitle title="ملف الكابتن" subtitle="البيانات الشخصية والوظيفية والمستندات والسيارات وسجل العمليات في مكان واحد."/><DriverProfileDetails driverId={driverId} today={today} soon={soon}/></OperationalShell>}
