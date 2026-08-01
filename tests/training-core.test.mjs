@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { strToU8, zipSync } from "fflate";
 
 import {
   parseQuestionDocumentParagraphs,
+  parseQuestionDocx,
   requireTrainingManager,
   scoreQuiz,
   stableCourseObjectKey,
@@ -56,6 +58,13 @@ test("DOCX question parser rejects a missing correct answer and count mismatch",
   assert.equal(parsed.valid, false);
   assert.ok(parsed.issues.some((issue) => issue.includes("الإجابة الصحيحة")));
   assert.ok(parsed.issues.some((issue) => issue.includes("لا يطابق")));
+});
+
+test("DOCX parser rejects oversized expanded XML before decompression", () => {
+  const oversized = zipSync({
+    "word/document.xml": strToU8("x".repeat(10 * 1024 * 1024 + 1)),
+  });
+  assert.throws(() => parseQuestionDocx(oversized), /أكبر من الحد/);
 });
 
 test("quiz scoring stays server-side and returns results only after submission", () => {

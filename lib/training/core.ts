@@ -31,6 +31,7 @@ export interface QuizQuestionForScoring {
 
 const optionPrefix = /^\s*([أبجدهـو]|[A-Z]|\d+)\s*[\)\.\-:]\s*(.+)$/iu;
 const separator = /^-{3,}$/;
+const MAX_DOCUMENT_XML_BYTES = 10 * 1024 * 1024;
 
 function decodeXml(value: string) {
   return value
@@ -47,10 +48,23 @@ function normalized(value: string) {
 
 export function paragraphsFromDocx(input: Uint8Array) {
   let archive: Record<string, Uint8Array>;
+  let documentTooLarge = false;
   try {
-    archive = unzipSync(input);
+    archive = unzipSync(input, {
+      filter: (file) => {
+        if (file.name !== "word/document.xml") return false;
+        if (file.originalSize > MAX_DOCUMENT_XML_BYTES) {
+          documentTooLarge = true;
+          return false;
+        }
+        return true;
+      },
+    });
   } catch {
     throw new IdentityError(400, "invalid_docx", "ملف Word غير صالح أو تالف.");
+  }
+  if (documentTooLarge) {
+    throw new IdentityError(413, "docx_content_too_large", "محتوى ملف Word أكبر من الحد المسموح.");
   }
   const document = archive["word/document.xml"];
   if (!document) {
