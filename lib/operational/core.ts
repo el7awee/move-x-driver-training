@@ -52,7 +52,7 @@ export function parseVehicleInput(p: Record<string, unknown>) {
   const make = String(p.make ?? "").trim();
   const model = String(p.model ?? "").trim();
   const status = String(p.status ?? "active") as VehicleStatus;
-  const modelYear = p.modelYear === null || p.modelYear === "" ? null : Number(p.modelYear);
+  const modelYear = p.modelYear === null || p.modelYear === undefined || p.modelYear === "" ? null : Number(p.modelYear);
   if (!validVehicleCode(internalCode) || !plateNumber || !make || !model || !VEHICLE_STATUSES.includes(status) ||
     (modelYear !== null && (!Number.isInteger(modelYear) || modelYear < 1950 || modelYear > 2100))) {
     throw new Error("invalid_vehicle");
