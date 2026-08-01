@@ -1,6 +1,7 @@
 import { requireReadyRequest } from "@/app/api/auth/_shared";
 import { IdentityError } from "@/lib/identity/core";
 import { validateCoursePolicy, type CourseStatus } from "@/lib/training/core";
+import { googleDrivePreviewUrl } from "@/lib/training/video-source";
 import { getTrainingStore, parseCourseId, safeTrainingError } from "../../_shared";
 
 type RouteContext = { params: Promise<{ courseId: string }> };
@@ -20,6 +21,9 @@ export async function GET(request: Request, { params }: RouteContext) {
     const unlocked = manager || Number(access?.video_percentage ?? 0) >= course.quizUnlockPercentage;
     return Response.json({
       course,
+      videoPreviewUrl: course.videoSourceType === "google_drive" && course.videoSourceRef
+        ? googleDrivePreviewUrl(course.videoSourceRef)
+        : null,
       videoPercentage: Number(access?.video_percentage ?? 0),
       questions: unlocked
         ? (manager ? await store.getManagerQuestions(courseId) : await store.getPublicQuestions(courseId))
@@ -46,6 +50,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       maxAttempts?: number | null;
       quizUnlockPercentage?: number;
       showExplanationsAfterSubmission?: boolean;
+      passMessage?: string;
+      retryMessage?: string;
     };
     const status = payload.status ?? existing.status;
     if (!["draft", "published", "archived"].includes(status)) {
@@ -71,6 +77,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       status,
       ...policy,
       showExplanationsAfterSubmission: payload.showExplanationsAfterSubmission ?? existing.showExplanationsAfterSubmission,
+      passMessage: payload.passMessage?.trim().slice(0, 4000) ?? existing.passMessage,
+      retryMessage: payload.retryMessage?.trim().slice(0, 4000) ?? existing.retryMessage,
     });
     return Response.json({ course }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

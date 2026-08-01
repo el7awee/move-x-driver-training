@@ -20,7 +20,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "identity:bootstrap": "node --experimental-strip-types scripts/bootstrap-identity.ts",
-    "training:inventory": "node --experimental-strip-types scripts/inventory-training-content.ts"
+    "training:inventory": "node --experimental-strip-types scripts/inventory-training-content.ts",
+    "training:prepare-drafts": "node --experimental-strip-types scripts/prepare-training-drafts.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

@@ -26,6 +26,8 @@ export async function POST(request: Request) {
       maxAttempts?: number | null;
       quizUnlockPercentage?: number;
       showExplanationsAfterSubmission?: boolean;
+      passMessage?: string;
+      retryMessage?: string;
     };
     const slug = payload.slug?.trim().toLowerCase() ?? "";
     const title = payload.title?.trim() ?? "";
@@ -44,6 +46,8 @@ export async function POST(request: Request) {
       description: payload.description?.trim().slice(0, 4000) ?? "",
       ...policy,
       showExplanationsAfterSubmission: payload.showExplanationsAfterSubmission !== false,
+      passMessage: payload.passMessage?.trim().slice(0, 4000) ?? "",
+      retryMessage: payload.retryMessage?.trim().slice(0, 4000) ?? "",
       createdByUserId: current.context.user.id,
     });
     return Response.json({ course }, { status: 201, headers: { "Cache-Control": "no-store" } });

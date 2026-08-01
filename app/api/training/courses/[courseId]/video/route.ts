@@ -92,7 +92,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     const courseId = parseCourseId((await params).courseId);
     const store = await getTrainingStore();
     const course = await store.getCourse(courseId);
-    if (!course?.videoObjectKey || !course.videoSizeBytes) {
+    if (course?.videoSourceType !== "r2" || !course.videoObjectKey || !course.videoSizeBytes) {
       throw new IdentityError(404, "video_not_found", "فيديو الدورة غير موجود.");
     }
     if (current.context.user.role === "driver") {

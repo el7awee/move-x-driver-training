@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { strToU8, zipSync } from "fflate";
 
 import {
@@ -11,6 +12,7 @@ import {
   validateCoursePolicy,
 } from "../lib/training/core.ts";
 import { parseByteRange, safeVideoFilename } from "../lib/training/video.ts";
+import { extractGoogleDriveFileId, googleDrivePreviewUrl, VIDEO_SOURCE_TYPES } from "../lib/training/video-source.ts";
 
 const validDocument = [
   "عنوان الاختبار:",
@@ -110,4 +112,38 @@ test("video ranges support normal, open, and suffix requests", () => {
 
 test("video filenames cannot escape the stable object-key namespace", () => {
   assert.equal(safeVideoFilename("../../ملف:تدريب.mp4"), "..-..-ملف-تدريب.mp4");
+});
+
+test("Google Drive source accepts only supported canonical link shapes", () => {
+  const fileId = "1AbCdEfGhIjKlMnOpQrStUvWxYz_123";
+  assert.equal(extractGoogleDriveFileId(`https://drive.google.com/file/d/${fileId}/view`), fileId);
+  assert.equal(extractGoogleDriveFileId(`https://drive.google.com/file/d/${fileId}/preview`), fileId);
+  assert.equal(extractGoogleDriveFileId(`https://drive.google.com/open?id=${fileId}`), fileId);
+  assert.equal(googleDrivePreviewUrl(fileId), `https://drive.google.com/file/d/${fileId}/preview`);
+});
+
+test("Google Drive source rejects fake hosts, raw HTML, and script/data injection", () => {
+  const rejected = [
+    "https://drive.google.com.evil.example/file/d/1AbCdEfGhIjKlMnOp/view",
+    "https://evil.example/?next=https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view",
+    "<iframe src=\"https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/preview\"></iframe>",
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "https://drive.google.com/file/d/short/view",
+  ];
+  for (const value of rejected) assert.throws(() => extractGoogleDriveFileId(value));
+});
+
+test("R2 remains an available future source type without being required", () => {
+  assert.deepEqual(VIDEO_SOURCE_TYPES, ["google_drive", "r2", "youtube", "external_url"]);
+  assert.ok(VIDEO_SOURCE_TYPES.includes("r2"));
+});
+
+test("driver workspace embeds the normalized Drive preview without requiring R2", async () => {
+  const workspaceSource = await readFile(new URL("../components/training-workspace.tsx", import.meta.url), "utf8");
+  const workerTypes = await readFile(new URL("../cloudflare-workers.d.ts", import.meta.url), "utf8");
+  assert.match(workspaceSource, /src=\{videoPreviewUrl\}/);
+  assert.match(workspaceSource, /أتممت مشاهدة الفيديو/);
+  assert.match(workspaceSource, /Restricted/);
+  assert.match(workerTypes, /TRAINING_VIDEOS\?: R2Bucket/);
 });

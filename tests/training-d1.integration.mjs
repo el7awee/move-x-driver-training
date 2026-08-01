@@ -93,6 +93,16 @@ test("training store persists assignment, progress, and server-scored results wi
       passPercentage: 80, maxAttempts: 2, quizUnlockPercentage: 80,
       showExplanationsAfterSubmission: true, createdByUserId: Number(admin.id),
     });
+    assert.equal(course.videoSourceType, "google_drive");
+    assert.equal(course.videoStatus, "awaiting_google_drive_url");
+    assert.equal(course.videoSourceRef, null);
+    const driveCourse = await store.updateGoogleDriveVideo(course.id, "1AbCdEfGhIjKlMnOpQrStUvWxYz_123");
+    assert.equal(driveCourse.videoSourceType, "google_drive");
+    assert.equal(driveCourse.videoStatus, "ready");
+    assert.equal(driveCourse.videoSourceRef, "1AbCdEfGhIjKlMnOpQrStUvWxYz_123");
+    const removedDrive = await store.removeVideoSource(course.id);
+    assert.equal(removedDrive.videoStatus, "awaiting_google_drive_url");
+    assert.equal(removedDrive.videoSourceRef, null);
     await store.replaceQuestions(course.id, [{
       position: 1, prompt: "ما الاختيار الآمن؟", options: ["أ", "ب"],
       correctOptionIndex: 1, explanation: "ب هو الاختيار الاصطناعي الصحيح.",
@@ -102,6 +112,9 @@ test("training store persists assignment, progress, and server-scored results wi
       contentType: "video/mp4", sizeBytes: 1024, checksum: "a".repeat(64),
       durationSeconds: 100, codec: "avc1",
     });
+    const r2Course = await store.getCourse(course.id);
+    assert.equal(r2Course.videoSourceType, "r2");
+    assert.equal(r2Course.videoStatus, "ready");
     const managerQuestions = await store.getManagerQuestions(course.id);
     const publicQuestions = await store.getPublicQuestions(course.id);
     assert.equal(managerQuestions[0].correctOptionIndex, 1);
@@ -111,7 +124,8 @@ test("training store persists assignment, progress, and server-scored results wi
     const published = await store.updateCourse(course.id, {
       title: course.title, description: course.description, passPercentage: 80,
       maxAttempts: 2, quizUnlockPercentage: 80,
-      showExplanationsAfterSubmission: true, status: "published",
+      showExplanationsAfterSubmission: true, passMessage: "نجاح اصطناعي",
+      retryMessage: "إعادة اصطناعية", status: "published",
     });
     await store.assignCourse(course.id, [Number(driver.id)], Number(admin.id), null);
     await store.updateProgress(course.id, Number(driver.id), 85, 85);

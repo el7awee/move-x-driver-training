@@ -5,6 +5,7 @@ import {
   type ImportedQuestion,
   type QuizQuestionForScoring,
 } from "../lib/training/core.ts";
+import type { VideoSourceType, VideoStatus } from "../lib/training/video-source.ts";
 
 interface D1PreparedStatementLike {
   bind(...values: unknown[]): D1PreparedStatementLike;
@@ -28,6 +29,11 @@ export interface CourseRecord {
   maxAttempts: number | null;
   quizUnlockPercentage: number;
   showExplanationsAfterSubmission: boolean;
+  passMessage: string;
+  retryMessage: string;
+  videoSourceType: VideoSourceType;
+  videoSourceRef: string | null;
+  videoStatus: VideoStatus;
   videoObjectKey: string | null;
   videoFilename: string | null;
   videoContentType: string | null;
@@ -52,6 +58,11 @@ function courseFromRow(row: Record<string, unknown>): CourseRecord {
     maxAttempts: row.max_attempts === null ? null : Number(row.max_attempts),
     quizUnlockPercentage: Number(row.quiz_unlock_percentage),
     showExplanationsAfterSubmission: Boolean(row.show_explanations_after_submission),
+    passMessage: String(row.pass_message ?? ""),
+    retryMessage: String(row.retry_message ?? ""),
+    videoSourceType: String(row.video_source_type) as VideoSourceType,
+    videoSourceRef: row.video_source_ref === null ? null : String(row.video_source_ref),
+    videoStatus: String(row.video_status) as VideoStatus,
     videoObjectKey: row.video_object_key === null ? null : String(row.video_object_key),
     videoFilename: row.video_filename === null ? null : String(row.video_filename),
     videoContentType: row.video_content_type === null ? null : String(row.video_content_type),
@@ -122,13 +133,16 @@ export class D1TrainingStore {
     maxAttempts: number | null;
     quizUnlockPercentage: number;
     showExplanationsAfterSubmission: boolean;
+    passMessage?: string;
+    retryMessage?: string;
     createdByUserId: number;
   }) {
     const result = await this.db.prepare(
       `INSERT INTO courses (
         slug, title, description, status, pass_percentage, max_attempts,
-        quiz_unlock_percentage, show_explanations_after_submission, created_by_user_id
-      ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?) RETURNING *`,
+        quiz_unlock_percentage, show_explanations_after_submission, pass_message, retry_message,
+        created_by_user_id
+      ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     ).bind(
       input.slug,
       input.title,
@@ -137,6 +151,8 @@ export class D1TrainingStore {
       input.maxAttempts,
       input.quizUnlockPercentage,
       input.showExplanationsAfterSubmission ? 1 : 0,
+      input.passMessage ?? "",
+      input.retryMessage ?? "",
       input.createdByUserId,
     ).first<Record<string, unknown>>();
     if (!result) throw new Error("Course insert returned no row");
@@ -150,12 +166,14 @@ export class D1TrainingStore {
     maxAttempts: number | null;
     quizUnlockPercentage: number;
     showExplanationsAfterSubmission: boolean;
+    passMessage: string;
+    retryMessage: string;
     status: CourseStatus;
   }) {
     const publishedAt = input.status === "published" ? new Date().toISOString() : null;
     const row = await this.db.prepare(
       `UPDATE courses SET title = ?, description = ?, pass_percentage = ?, max_attempts = ?,
-        quiz_unlock_percentage = ?, show_explanations_after_submission = ?, status = ?,
+        quiz_unlock_percentage = ?, show_explanations_after_submission = ?, pass_message = ?, retry_message = ?, status = ?,
         published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE id = ? RETURNING *`,
@@ -166,6 +184,8 @@ export class D1TrainingStore {
       input.maxAttempts,
       input.quizUnlockPercentage,
       input.showExplanationsAfterSubmission ? 1 : 0,
+      input.passMessage,
+      input.retryMessage,
       input.status,
       input.status,
       publishedAt,
@@ -177,7 +197,10 @@ export class D1TrainingStore {
   async courseReadiness(courseId: number) {
     return this.db.prepare(
       `SELECT
-        EXISTS(SELECT 1 FROM courses c WHERE c.id = ? AND c.video_object_key IS NOT NULL) AS has_video,
+        EXISTS(SELECT 1 FROM courses c WHERE c.id = ? AND c.video_status = 'ready' AND (
+          (c.video_source_type = 'google_drive' AND c.video_source_ref IS NOT NULL) OR
+          (c.video_source_type = 'r2' AND c.video_object_key IS NOT NULL)
+        )) AS has_video,
         (SELECT COUNT(*) FROM course_questions q WHERE q.course_id = ?) AS question_count,
         (SELECT COUNT(*) FROM course_questions q WHERE q.course_id = ? AND
           (q.correct_option_index < 0 OR q.correct_option_index >=
@@ -330,11 +353,13 @@ export class D1TrainingStore {
     codec: string | null;
   }) {
     return this.db.prepare(
-      `UPDATE courses SET video_object_key = ?, video_filename = ?, video_content_type = ?,
+      `UPDATE courses SET video_source_type = 'r2', video_source_ref = ?, video_status = 'ready',
+        video_object_key = ?, video_filename = ?, video_content_type = ?,
         video_size_bytes = ?, video_checksum = ?, video_duration_seconds = ?, video_codec = ?,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE id = ? RETURNING video_object_key`,
     ).bind(
+      input.objectKey,
       input.objectKey,
       input.filename,
       input.contentType,
@@ -344,6 +369,29 @@ export class D1TrainingStore {
       input.codec,
       courseId,
     ).first<{ video_object_key: string }>();
+  }
+
+  async updateGoogleDriveVideo(courseId: number, fileId: string) {
+    const row = await this.db.prepare(
+      `UPDATE courses SET video_source_type = 'google_drive', video_source_ref = ?, video_status = 'ready',
+        video_filename = NULL, video_content_type = NULL, video_size_bytes = NULL,
+        video_checksum = NULL, video_duration_seconds = NULL, video_codec = NULL,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? RETURNING *`,
+    ).bind(fileId, courseId).first<Record<string, unknown>>();
+    return row ? courseFromRow(row) : null;
+  }
+
+  async removeVideoSource(courseId: number) {
+    const row = await this.db.prepare(
+      `UPDATE courses SET video_source_type = 'google_drive', video_source_ref = NULL,
+        video_status = 'awaiting_google_drive_url', video_filename = NULL,
+        video_content_type = NULL, video_size_bytes = NULL, video_checksum = NULL,
+        video_duration_seconds = NULL, video_codec = NULL,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? RETURNING *`,
+    ).bind(courseId).first<Record<string, unknown>>();
+    return row ? courseFromRow(row) : null;
   }
 
   async assignCourse(courseId: number, userIds: number[], assignedByUserId: number, dueAt: string | null) {

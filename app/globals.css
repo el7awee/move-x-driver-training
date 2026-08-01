@@ -448,6 +448,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .training-question label,.training-question-editor>label:has(input[type="radio"]) { display:flex; align-items:center; gap:9px; font-weight:500; }
 .training-question input[type="radio"],.training-question-editor input[type="radio"],.training-driver-list input { width:auto; }
 .training-video { width:100%; max-height:68vh; background:#05070a; border-radius:14px; }
+.training-drive-frame { aspect-ratio:16/9; min-height:420px; border:0; }
+.training-inline-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.drive-availability-note { margin:0; padding:13px 15px; border-radius:12px; background:color-mix(in srgb,var(--warning) 10%,var(--surface)); color:var(--muted); line-height:1.75; }
+.training-editor details { border:1px solid var(--line); border-radius:12px; padding:12px; }
+.training-editor summary { cursor:pointer; font-weight:800; }
 .training-driver-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
 .training-driver-list label { display:flex; gap:8px; align-items:center; }
 .training-report { overflow:auto; border:1px solid var(--line); border-radius:14px; }
@@ -459,6 +464,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .training-create,.training-policy { grid-template-columns:1fr; }
   .training-create .primary-button { width:100%; }
   .training-editor { padding:18px 14px; }
+  .training-drive-frame { min-height:230px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

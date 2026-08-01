@@ -38,14 +38,36 @@ questions, declared/extracted counts, and review errors. A failed folder is
 skipped independently. Imported courses must remain drafts until a manager has
 reviewed and published them.
 
-## Environment boundary and pending R2 setup
+Prepare idempotent Draft-only SQL outside the repository after choosing an
+existing synthetic Staging manager ID:
 
-Production and Staging require separate private R2 buckets bound as
-`TRAINING_VIDEOS`. Do not add the binding until the corresponding bucket is
-created and its exact name is confirmed. Production and Staging must never share
-a bucket. At the time this foundation was prepared, Cloudflare returned error
-10042 because R2 was not enabled for the account, so no bucket, binding, upload,
-remote migration, or deployment was attempted.
+```text
+npm run training:prepare-drafts -- D:\MOVE-X-CONTENT-INVENTORY.json <manager-id> D:\MOVE-X-TRAINING-DRAFTS.sql
+```
+
+The generated rows use `video_source_type=google_drive`, a null source reference,
+and `video_status=awaiting_google_drive_url`. The command does not publish or
+assign a course, and re-running it does not overwrite an existing manager edit.
+
+## Video sources
+
+`google_drive` is the current operational source. A manager pastes a supported
+`drive.google.com` file URL; the server validates the exact host and URL shape,
+stores only the file ID, and creates the canonical `/preview` URL internally.
+Raw HTML, iframe markup, script/data URLs, lookalike hosts, and unparseable Drive
+links are rejected. New imported courses use `awaiting_google_drive_url` until a
+manager supplies a link.
+
+Drive sharing can be either `Anyone with the link` or `Restricted`. Restricted
+files must be shared with the drivers' Google accounts; Move X cannot infer that
+permission ahead of playback. A missing preview can mean a deleted file, invalid
+link, required Google login, missing sharing permission, or disabled preview.
+Drive does not prevent URL sharing or screen capture.
+
+R2 remains an optional future source. `TRAINING_VIDEOS` is an optional binding;
+its absence does not block building, deploying, creating Drive courses, or Drive
+playback. If R2 is later enabled, Production and Staging must use separate
+private buckets and must never share a binding.
 
 The migration `drizzle/0001_training_courses.sql` is schema-only: it creates no
 users, assignments, attempts, course rows, or seed content. Validate locally
