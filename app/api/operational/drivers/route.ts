@@ -1,0 +1,7 @@
+import { hashPassword } from "@/lib/identity/core";
+import { generateTemporaryPassword, parseDriverInput } from "@/lib/operational/core";
+import { driverDataProtectionKey, nationalIdHash, protectNationalId } from "@/lib/operational/driver-security";
+import { operationalError, operationalStore, requireAdmin } from "../_shared";
+
+export async function GET(request:Request){try{await requireAdmin(request);const url=new URL(request.url);const query=url.searchParams.get("q")??"";const queryHash=/^[0-9]{8,20}$/.test(query)?await nationalIdHash(query,await driverDataProtectionKey()):null;return Response.json({drivers:await(await operationalStore()).listDrivers(query,url.searchParams.get("status")??"",url.searchParams.get("shift")??"",url.searchParams.get("branch")??"",queryHash)});}catch(error){return operationalError(error)}}
+export async function POST(request:Request){try{const current=await requireAdmin(request);const input=parseDriverInput(await request.json() as Record<string,unknown>);const protectedId=await protectNationalId(input.nationalId,await driverDataProtectionKey());const temporaryPassword=generateTemporaryPassword();const id=await(await operationalStore()).createDriver({...input,nationalIdEncrypted:protectedId?.encrypted??null,nationalIdHash:protectedId?.hash??null,nationalIdLast4:protectedId?.last4??null,passwordHash:await hashPassword(temporaryPassword)},current.context.user.id);return Response.json({id,temporaryPassword},{status:201,headers:{"Cache-Control":"no-store"}});}catch(error){return operationalError(error)}}
