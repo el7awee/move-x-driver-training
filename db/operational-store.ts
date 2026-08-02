@@ -21,9 +21,13 @@ export interface VehicleInput {
 
 export interface DriverInput {
   driverCode: string; fullName: string; phone: string; email: string | null;
-  secondaryPhone: string | null; dateOfBirth: string | null; address: string | null; branchOrLocation: string | null;
+  secondaryPhone: string | null; dateOfBirth: string | null; gender: "male" | "female" | null; nationality: string | null;
+  maritalStatus: "single" | "married" | "divorced" | "widowed" | null; religion: string | null; occupation: string | null;
+  address: string | null; branchOrLocation: string | null;
   nationalIdEncrypted: string | null; nationalIdHash: string | null; nationalIdLast4: string | null;
-  drivingLicenseNumber: string | null; drivingLicenseType: string | null; drivingLicenseIssueDate: string | null; drivingLicenseExpiry: string | null;
+  nationalIdExpiry: string | null; nationalIdCardSerial: string | null;
+  drivingLicenseNumber: string | null; drivingLicenseType: string | null; drivingLicenseTrafficDepartment: string | null;
+  drivingLicenseTrafficUnit: string | null; drivingLicenseCategory: string | null; drivingLicenseIssueDate: string | null; drivingLicenseExpiry: string | null;
   drivingLicenseStatus: DrivingLicenseStatus; drivingLicenseNotes: string;
   criminalRecordStatus: CriminalRecordStatus; criminalRecordIssueDate: string | null; criminalRecordExpiry: string | null; criminalRecordReference: string | null; criminalRecordNotes: string;
   drugTestStatus: DrugTestStatus; drugTestDate: string | null; drugTestExpiry: string | null; drugTestLab: string | null; drugTestReference: string | null; drugTestNotes: string;
@@ -118,15 +122,15 @@ export class OperationalStore {
     await this.db.batch([
       this.db.prepare(`INSERT INTO users(login_code,display_name,email,phone,role,password_hash,must_change_password,status,preferred_language)
         VALUES(?,?,?,?, 'driver',?,1,?,'ar')`).bind(input.driverCode,input.fullName,input.email,input.phone,input.passwordHash,accountStatus),
-      this.db.prepare(`INSERT INTO driver_profiles(user_id,employee_code,secondary_phone,date_of_birth,address,branch_or_location,hire_date,primary_shift,employment_status,
+      this.db.prepare(`INSERT INTO driver_profiles(user_id,employee_code,secondary_phone,date_of_birth,gender,nationality,marital_status,religion,occupation,address,branch_or_location,hire_date,primary_shift,employment_status,
         emergency_contact_name,emergency_contact_phone,notes,national_id_encrypted,national_id_hash,national_id_last4,
-        driving_license_number,driving_license_type,driving_license_issue_date,driving_license_expiry,driving_license_status,driving_license_notes,
+        national_id_expiry,national_id_card_serial,driving_license_number,driving_license_type,driving_license_traffic_department,driving_license_traffic_unit,driving_license_category,driving_license_issue_date,driving_license_expiry,driving_license_status,driving_license_notes,
         criminal_record_status,criminal_record_issue_date,criminal_record_expiry,criminal_record_reference,criminal_record_notes,
         drug_test_status,drug_test_date,drug_test_expiry,drug_test_lab,drug_test_reference,drug_test_notes,source)
-        SELECT id,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual_admin' FROM users WHERE login_code=?`).bind(
-          input.driverCode,input.secondaryPhone,input.dateOfBirth,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
+        SELECT id,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual_admin' FROM users WHERE login_code=?`).bind(
+          input.driverCode,input.secondaryPhone,input.dateOfBirth,input.gender,input.nationality,input.maritalStatus,input.religion,input.occupation,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
           input.emergencyContactName,input.emergencyContactPhone,input.notes,input.nationalIdEncrypted,input.nationalIdHash,input.nationalIdLast4,
-          input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
+          input.nationalIdExpiry,input.nationalIdCardSerial,input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseTrafficDepartment,input.drivingLicenseTrafficUnit,input.drivingLicenseCategory,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
           input.criminalRecordStatus,input.criminalRecordIssueDate,input.criminalRecordExpiry,input.criminalRecordReference,input.criminalRecordNotes,
           input.drugTestStatus,input.drugTestDate,input.drugTestExpiry,input.drugTestLab,input.drugTestReference,input.drugTestNotes,input.driverCode),
       this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)
@@ -149,14 +153,14 @@ export class OperationalStore {
     const statements=[
       this.db.prepare(`UPDATE users SET login_code=?,display_name=?,email=?,phone=?,status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
         .bind(input.driverCode,input.fullName,input.email,input.phone,accountStatus,id),
-      this.db.prepare(`UPDATE driver_profiles SET employee_code=?,secondary_phone=?,date_of_birth=?,address=?,branch_or_location=?,hire_date=?,primary_shift=?,employment_status=?,
+      this.db.prepare(`UPDATE driver_profiles SET employee_code=?,secondary_phone=?,date_of_birth=?,gender=?,nationality=?,marital_status=?,religion=?,occupation=?,address=?,branch_or_location=?,hire_date=?,primary_shift=?,employment_status=?,
         emergency_contact_name=?,emergency_contact_phone=?,notes=?,national_id_encrypted=?,national_id_hash=?,national_id_last4=?,
-        driving_license_number=?,driving_license_type=?,driving_license_issue_date=?,driving_license_expiry=?,driving_license_status=?,driving_license_notes=?,
+        national_id_expiry=?,national_id_card_serial=?,driving_license_number=?,driving_license_type=?,driving_license_traffic_department=?,driving_license_traffic_unit=?,driving_license_category=?,driving_license_issue_date=?,driving_license_expiry=?,driving_license_status=?,driving_license_notes=?,
         criminal_record_status=?,criminal_record_issue_date=?,criminal_record_expiry=?,criminal_record_reference=?,criminal_record_notes=?,
         drug_test_status=?,drug_test_date=?,drug_test_expiry=?,drug_test_lab=?,drug_test_reference=?,drug_test_notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id=? AND source='manual_admin'`)
-        .bind(input.driverCode,input.secondaryPhone,input.dateOfBirth,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
+        .bind(input.driverCode,input.secondaryPhone,input.dateOfBirth,input.gender,input.nationality,input.maritalStatus,input.religion,input.occupation,input.address,input.branchOrLocation,input.hireDate,input.primaryShift,input.employmentStatus,
           input.emergencyContactName,input.emergencyContactPhone,input.notes,nationalIdEncrypted,nationalIdHash,nationalIdLast4,
-          input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
+          input.nationalIdExpiry,input.nationalIdCardSerial,input.drivingLicenseNumber,input.drivingLicenseType,input.drivingLicenseTrafficDepartment,input.drivingLicenseTrafficUnit,input.drivingLicenseCategory,input.drivingLicenseIssueDate,input.drivingLicenseExpiry,input.drivingLicenseStatus,input.drivingLicenseNotes,
           input.criminalRecordStatus,input.criminalRecordIssueDate,input.criminalRecordExpiry,input.criminalRecordReference,input.criminalRecordNotes,
           input.drugTestStatus,input.drugTestDate,input.drugTestExpiry,input.drugTestLab,input.drugTestReference,input.drugTestNotes,id),
       this.db.prepare(`INSERT INTO audit_logs(actor_user_id,action,module_key,entity_type,entity_id,result,metadata_json)

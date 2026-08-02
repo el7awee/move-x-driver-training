@@ -13,9 +13,9 @@ Creating a captain writes the `users` and `driver_profiles` rows through one D1 
 | Area | Fields | Storage and access |
 | --- | --- | --- |
 | Account | login code, password hash, role, account status, must-change flag | `users`; system administrators manage it |
-| Basic profile | full name, driver code, profile photo document, phone, secondary phone, email, date of birth, address, branch/location, hire date, primary shift, employment status, emergency contact, notes | `driver_profiles`; admin full access, supervisor/driver limited projection |
-| National ID | encrypted value, deterministic keyed hash, last four digits | AES-GCM ciphertext and HMAC only; explicit admin reveal is audited; key is a Cloudflare Secret |
-| Driving licence | number, type, issue/expiry dates, status, notes | admin edits; supervisor and owner see status and expiry only |
+| Basic profile | full name, driver code, profile photo document, phone, secondary phone, email, date of birth, gender, nationality, marital status, religion, occupation, address, branch/location, hire date, primary shift, employment status, emergency contact, notes | `driver_profiles`; optional sensitive attributes are admin-only; supervisor/driver receive a limited projection |
+| National ID | encrypted value, deterministic keyed hash, last four digits, card expiry, card serial | AES-GCM ciphertext and HMAC only for the ID value; explicit admin reveal is audited; supporting fields are admin-only; key is a Cloudflare Secret |
+| Driving licence | number, type, traffic department, traffic unit, category, issue/expiry dates, status, notes | admin edits; supervisor and owner see status and expiry only |
 | Criminal record | status, issue/expiry dates, reference, notes | admin edits; supervisor and owner see status and expiry only |
 | Drug test | status, date, next due/expiry, lab, reference, notes | admin edits; supervisor and owner see status and expiry only; positive is always textual |
 | Document metadata | type, original filename, detected MIME, size, provider key/ID, dates, verification, uploader/reviewer, archive timestamp | `driver_documents`; provider identifiers never enter public API responses |

@@ -128,15 +128,23 @@ export function parseDriverInput(p: Record<string, unknown>) {
   const criminalRecordStatus = String(p.criminalRecordStatus ?? "not_provided") as CriminalRecordStatus;
   const drugTestStatus = String(p.drugTestStatus ?? "not_provided") as DrugTestStatus;
   const secondaryPhone = String(p.secondaryPhone ?? "").trim();
+  const gender = String(p.gender ?? "").trim() as "" | "male" | "female";
+  const maritalStatus = String(p.maritalStatus ?? "").trim() as "" | "single" | "married" | "divorced" | "widowed";
   if (!/^[A-Z0-9_-]{3,24}$/.test(driverCode) || !fullName || fullName.length > 160 || !/^\+?[0-9 ()-]{7,24}$/.test(phone) ||
     !validOptionalEmail(email) || !SHIFT_TYPES.includes(primaryShift) || !EMPLOYMENT_STATUSES.includes(employmentStatus) ||
     !DRIVING_LICENSE_STATUSES.includes(drivingLicenseStatus) || !CRIMINAL_RECORD_STATUSES.includes(criminalRecordStatus) || !DRUG_TEST_STATUSES.includes(drugTestStatus) ||
-    (nationalId && !/^[0-9]{8,20}$/.test(nationalId)) || (secondaryPhone && !/^\+?[0-9 ()-]{7,24}$/.test(secondaryPhone))) throw new Error("invalid_driver_profile");
+    (nationalId && !/^[0-9]{8,20}$/.test(nationalId)) || (secondaryPhone && !/^\+?[0-9 ()-]{7,24}$/.test(secondaryPhone)) ||
+    (gender && !["male", "female"].includes(gender)) || (maritalStatus && !["single", "married", "divorced", "widowed"].includes(maritalStatus))) throw new Error("invalid_driver_profile");
   return {
     driverCode, fullName, phone, email: email || null, nationalId: nationalId || null,
-    secondaryPhone: secondaryPhone || null, dateOfBirth: optionalDate(p.dateOfBirth, "invalid_driver_profile"), address: optionalText(p.address, 500),
+    secondaryPhone: secondaryPhone || null, dateOfBirth: optionalDate(p.dateOfBirth, "invalid_driver_profile"), gender: gender || null,
+    nationality: optionalText(p.nationality, 80), maritalStatus: maritalStatus || null, religion: optionalText(p.religion, 80), occupation: optionalText(p.occupation, 160),
+    address: optionalText(p.address, 500),
     branchOrLocation: optionalText(p.branchOrLocation ?? p.location, 160),
+    nationalIdExpiry: optionalDate(p.nationalIdExpiry, "invalid_driver_profile"), nationalIdCardSerial: optionalText(p.nationalIdCardSerial, 80),
     drivingLicenseNumber: optionalText(p.drivingLicenseNumber ?? p.licenseNumber, 80), drivingLicenseType: optionalText(p.drivingLicenseType ?? p.licenseType, 80),
+    drivingLicenseTrafficDepartment: optionalText(p.drivingLicenseTrafficDepartment, 160), drivingLicenseTrafficUnit: optionalText(p.drivingLicenseTrafficUnit, 160),
+    drivingLicenseCategory: optionalText(p.drivingLicenseCategory, 80),
     drivingLicenseIssueDate: optionalDate(p.drivingLicenseIssueDate ?? p.licenseIssuedAt, "invalid_driver_profile"),
     drivingLicenseExpiry: optionalDate(p.drivingLicenseExpiry ?? p.licenseExpiresAt, "invalid_driver_profile"), drivingLicenseStatus,
     drivingLicenseNotes: String(p.drivingLicenseNotes ?? "").trim().slice(0, 2000),
