@@ -1,5 +1,5 @@
 import type { IdentityRole } from "../lib/identity/core.ts";
-import { publicOperationalStatus, type AssignmentType, type CriminalRecordStatus, type DriverDocumentType, type DrivingLicenseStatus, type DrugTestStatus, type EmploymentStatus, type ShiftType, type VehicleCondition, type VehicleStatus } from "../lib/operational/core.ts";
+import { publicOperationalStatus, type AssignmentType, type CriminalRecordStatus, type DriverDocumentType, type DrivingLicenseStatus, type DrugTestStatus, type EmploymentStatus, type ShiftType, type VehicleCondition, type VehicleDocumentType, type VehicleStatus } from "../lib/operational/core.ts";
 
 interface Statement { bind(...values: unknown[]): Statement; all<T>(): Promise<{ results: T[] }>; first<T>(): Promise<T | null>; run(): Promise<{ meta?: { changes?: number } }>; }
 interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown[]>; }
@@ -13,7 +13,9 @@ export interface VehicleInput {
   internalCode: string; plateNumber: string; make: string; model: string;
   modelYear: number | null; color: string | null; vin: string | null; engineNumber:string|null; fuelType:string|null; currentOdometer:number|null;
   vehicleLicenseNumber:string|null; vehicleType: string | null; registrationExpiresAt: string | null; insuranceExpiresAt: string | null;
-  insuranceCompany:string|null; location: string | null;
+  ownerName:string|null; trafficDepartment:string|null; trafficUnit:string|null; licenseIssueDate:string|null; taxExpiresAt:string|null;
+  technicalInspectionDue:string|null; insurancePolicyNumber:string|null; insuranceCompany:string|null; engineCapacityCc:number|null;
+  cylinderCount:number|null; legalRestrictions:string|null; location: string | null;
   status: VehicleStatus; notes: string;
 }
 
@@ -30,6 +32,7 @@ export interface DriverInput {
 }
 
 export interface DriverDocumentInput { driverProfileId:number; documentType:DriverDocumentType; originalFilename:string; mimeType:string; fileSize:number; storageProvider:"google_drive"|"r2"; storageFileId:string|null; storageKey:string|null; issueDate:string|null; expiryDate:string|null; verificationStatus:"pending"|"verified"|"rejected"|"expired"; }
+export interface VehicleDocumentInput { vehicleId:number; documentType:VehicleDocumentType; originalFilename:string; mimeType:string; fileSize:number; storageProvider:"google_drive"|"r2"; storageFileId:string|null; storageKey:string|null; verificationStatus:"pending"|"verified"|"rejected"; }
 
 export interface DriverAuthorizationInput {
   driverUserId: number; shiftType: ShiftType; assignmentType: AssignmentType;
@@ -276,7 +279,8 @@ export class OperationalStore {
        WHERE a.vehicle_id=v.id AND a.status='active' AND (a.valid_from IS NULL OR a.valid_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND (a.valid_to IS NULL OR a.valid_to>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) AS authorized_driver_names,
       (SELECT u.display_name FROM vehicle_custodies c JOIN users u ON u.id=c.driver_user_id
        WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_name,
-      (SELECT c.driver_user_id FROM vehicle_custodies c WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_user_id
+      (SELECT c.driver_user_id FROM vehicle_custodies c WHERE c.vehicle_id=v.id AND c.ended_at IS NULL LIMIT 1) AS current_driver_user_id,
+      (SELECT COUNT(*) FROM vehicle_documents d WHERE d.vehicle_id=v.id AND d.archived_at IS NULL) AS license_document_count
       FROM vehicles v
       WHERE v.source='manual_admin' AND (?='' OR v.internal_code LIKE ? OR v.plate_number LIKE ? OR COALESCE(v.vin,'') LIKE ?)
       AND (?='' OR v.status=?) AND (?='' OR v.location LIKE ?) ORDER BY v.updated_at DESC`).bind(search.trim(), term, term, term, status, status, location.trim(), `%${location.trim()}%`).all<Record<string, unknown>>();
@@ -284,8 +288,13 @@ export class OperationalStore {
   }
 
   async createVehicle(input: VehicleInput, actorUserId: number) {
-    const row = await this.db.prepare(`INSERT INTO vehicles (internal_code,plate_number,make,model,model_year,color,vin,engine_number,fuel_type,current_odometer,vehicle_license_number,vehicle_type,registration_expires_at,insurance_expires_at,insurance_company,location,status,notes,source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'manual_admin') RETURNING id`).bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,input.vehicleLicenseNumber,input.vehicleType,input.registrationExpiresAt,input.insuranceExpiresAt,input.insuranceCompany,input.location,input.status,input.notes).first<{id:number}>();
+    const row = await this.db.prepare(`INSERT INTO vehicles
+      (internal_code,plate_number,make,model,model_year,color,vin,engine_number,fuel_type,current_odometer,vehicle_license_number,vehicle_type,owner_name,traffic_department,traffic_unit,license_issue_date,registration_expires_at,tax_expires_at,technical_inspection_due,insurance_policy_number,insurance_expires_at,insurance_company,engine_capacity_cc,cylinder_count,legal_restrictions,location,status,notes,source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'manual_admin') RETURNING id`).bind(
+        input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,
+        input.vehicleLicenseNumber,input.vehicleType,input.ownerName,input.trafficDepartment,input.trafficUnit,input.licenseIssueDate,input.registrationExpiresAt,
+        input.taxExpiresAt,input.technicalInspectionDue,input.insurancePolicyNumber,input.insuranceExpiresAt,input.insuranceCompany,input.engineCapacityCc,
+        input.cylinderCount,input.legalRestrictions,input.location,input.status,input.notes).first<{id:number}>();
     if (!row) throw new Error("Vehicle insert returned no row");
     await this.writeAudit(actorUserId,"vehicle.created","vehicle",String(row.id),"success",{status:input.status});
     return Number(row.id);
@@ -294,10 +303,40 @@ export class OperationalStore {
   async updateVehicle(id: number, input: VehicleInput, actorUserId: number) {
     const existing = await this.db.prepare("SELECT id FROM vehicles WHERE id=? AND source='manual_admin'").bind(id).first();
     if (!existing) throw new Error("vehicle_not_found");
-    await this.db.prepare(`UPDATE vehicles SET internal_code=?,plate_number=?,make=?,model=?,model_year=?,color=?,vin=?,engine_number=?,fuel_type=?,current_odometer=?,vehicle_license_number=?,vehicle_type=?,registration_expires_at=?,insurance_expires_at=?,insurance_company=?,location=?,status=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND source='manual_admin'`)
-      .bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,input.vehicleLicenseNumber,input.vehicleType,input.registrationExpiresAt,input.insuranceExpiresAt,input.insuranceCompany,input.location,input.status,input.notes,id).run();
+    await this.db.prepare(`UPDATE vehicles SET internal_code=?,plate_number=?,make=?,model=?,model_year=?,color=?,vin=?,engine_number=?,fuel_type=?,current_odometer=?,vehicle_license_number=?,vehicle_type=?,owner_name=?,traffic_department=?,traffic_unit=?,license_issue_date=?,registration_expires_at=?,tax_expires_at=?,technical_inspection_due=?,insurance_policy_number=?,insurance_expires_at=?,insurance_company=?,engine_capacity_cc=?,cylinder_count=?,legal_restrictions=?,location=?,status=?,notes=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND source='manual_admin'`)
+      .bind(input.internalCode,input.plateNumber,input.make,input.model,input.modelYear,input.color,input.vin,input.engineNumber,input.fuelType,input.currentOdometer,input.vehicleLicenseNumber,input.vehicleType,input.ownerName,input.trafficDepartment,input.trafficUnit,input.licenseIssueDate,input.registrationExpiresAt,input.taxExpiresAt,input.technicalInspectionDue,input.insurancePolicyNumber,input.insuranceExpiresAt,input.insuranceCompany,input.engineCapacityCc,input.cylinderCount,input.legalRestrictions,input.location,input.status,input.notes,id).run();
     if (input.status !== "active") await this.deactivateVehicleOperations(id, actorUserId);
     await this.writeAudit(actorUserId,"vehicle.updated","vehicle",String(id),"success",{status:input.status});
+  }
+
+  async listVehicleDocuments(vehicleId:number) {
+    const rows=await this.db.prepare(`SELECT d.* FROM vehicle_documents d JOIN vehicles v ON v.id=d.vehicle_id
+      WHERE d.vehicle_id=? AND v.source='manual_admin' ORDER BY d.archived_at IS NOT NULL,d.uploaded_at DESC,d.id DESC`).bind(vehicleId).all<Record<string,unknown>>();
+    return rows.results;
+  }
+
+  async createVehicleDocument(input:VehicleDocumentInput,actorUserId:number) {
+    const vehicle=await this.db.prepare("SELECT id FROM vehicles WHERE id=? AND source='manual_admin'").bind(input.vehicleId).first();
+    if(!vehicle)throw new Error("vehicle_not_found");
+    const row=await this.db.prepare(`INSERT INTO vehicle_documents(vehicle_id,document_type,original_filename,mime_type,file_size,storage_provider,storage_file_id,storage_key,verification_status,uploaded_by)
+      VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id`).bind(input.vehicleId,input.documentType,input.originalFilename,input.mimeType,input.fileSize,input.storageProvider,input.storageFileId,input.storageKey,input.verificationStatus,actorUserId).first<{id:number}>();
+    if(!row)throw new Error("document_insert_failed");
+    await this.writeAudit(actorUserId,"vehicle.license_document_uploaded","vehicle_document",String(row.id),"success",{vehicleId:input.vehicleId,documentType:input.documentType,mimeType:input.mimeType,fileSize:input.fileSize});
+    return Number(row.id);
+  }
+
+  async vehicleDocumentForDownload(documentId:number) { return this.db.prepare(`SELECT d.* FROM vehicle_documents d JOIN vehicles v ON v.id=d.vehicle_id WHERE d.id=? AND d.archived_at IS NULL AND v.source='manual_admin'`).bind(documentId).first<Record<string,unknown>>(); }
+
+  async archiveVehicleDocument(documentId:number,actorUserId:number) {
+    const document=await this.vehicleDocumentForDownload(documentId);if(!document)throw new Error("document_not_found");
+    await this.db.prepare("UPDATE vehicle_documents SET archived_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND archived_at IS NULL").bind(documentId).run();
+    await this.writeAudit(actorUserId,"vehicle.license_document_archived","vehicle_document",String(documentId),"success",{vehicleId:document.vehicle_id,documentType:document.document_type});
+  }
+
+  async reviewVehicleDocument(documentId:number,status:"verified"|"rejected",rejectionReason:string|null,actorUserId:number) {
+    const document=await this.vehicleDocumentForDownload(documentId);if(!document)throw new Error("document_not_found");
+    await this.db.prepare(`UPDATE vehicle_documents SET verification_status=?,verified_by=?,verified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),rejection_reason=? WHERE id=? AND archived_at IS NULL`).bind(status,actorUserId,status==='rejected'?rejectionReason:null,documentId).run();
+    await this.writeAudit(actorUserId,"vehicle.license_document_reviewed","vehicle_document",String(documentId),"success",{vehicleId:document.vehicle_id,status});
   }
 
   async listAssignments() {

@@ -9,6 +9,7 @@ export type DrivingLicenseStatus = "valid" | "expiring" | "expired" | "suspended
 export type CriminalRecordStatus = "valid" | "pending" | "expired" | "rejected" | "not_provided";
 export type DrugTestStatus = "negative" | "positive" | "pending" | "expired" | "not_provided";
 export type DriverDocumentType = "profile_photo" | "national_id_front" | "national_id_back" | "driving_license_front" | "driving_license_back" | "criminal_record" | "drug_test" | "employment_document" | "other";
+export type VehicleDocumentType = "vehicle_license_front" | "vehicle_license_back";
 export type VehicleCondition = "good" | "needs_attention" | "damaged";
 
 export const VEHICLE_STATUSES = ["active", "maintenance", "inactive", "retired"] as const;
@@ -19,6 +20,7 @@ export const DRIVING_LICENSE_STATUSES = ["valid", "expiring", "expired", "suspen
 export const CRIMINAL_RECORD_STATUSES = ["valid", "pending", "expired", "rejected", "not_provided"] as const;
 export const DRUG_TEST_STATUSES = ["negative", "positive", "pending", "expired", "not_provided"] as const;
 export const DRIVER_DOCUMENT_TYPES = ["profile_photo", "national_id_front", "national_id_back", "driving_license_front", "driving_license_back", "criminal_record", "drug_test", "employment_document", "other"] as const;
+export const VEHICLE_DOCUMENT_TYPES = ["vehicle_license_front", "vehicle_license_back"] as const;
 export const VEHICLE_CONDITIONS = ["good", "needs_attention", "damaged"] as const;
 
 export function destinationForRole(role: IdentityRole) {
@@ -80,8 +82,27 @@ export function parseVehicleInput(p: Record<string, unknown>) {
     color: String(p.color ?? "").trim() || null, vin: vin || null, engineNumber: optionalText(p.engineNumber,80),
     fuelType: optionalText(p.fuelType,40), currentOdometer, vehicleLicenseNumber: optionalText(p.vehicleLicenseNumber,80),
     vehicleType: optionalText(p.vehicleType, 80), registrationExpiresAt: optionalDate(p.registrationExpiresAt, "invalid_vehicle"),
-    insuranceExpiresAt: optionalDate(p.insuranceExpiresAt, "invalid_vehicle"), insuranceCompany: optionalText(p.insuranceCompany,160), location: optionalText(p.location, 160), status,
+    ownerName: optionalText(p.ownerName, 200), trafficDepartment: optionalText(p.trafficDepartment, 120), trafficUnit: optionalText(p.trafficUnit, 120),
+    licenseIssueDate: optionalDate(p.licenseIssueDate, "invalid_vehicle"), taxExpiresAt: optionalDate(p.taxExpiresAt, "invalid_vehicle"),
+    technicalInspectionDue: optionalYearOrDate(p.technicalInspectionDue, "invalid_vehicle"), insurancePolicyNumber: optionalText(p.insurancePolicyNumber, 120),
+    engineCapacityCc: optionalPositiveInteger(p.engineCapacityCc, 100, 20000, "invalid_vehicle"), cylinderCount: optionalPositiveInteger(p.cylinderCount, 1, 24, "invalid_vehicle"),
+    legalRestrictions: optionalText(p.legalRestrictions, 500), insuranceExpiresAt: optionalDate(p.insuranceExpiresAt, "invalid_vehicle"),
+    insuranceCompany: optionalText(p.insuranceCompany,160), location: optionalText(p.location, 160), status,
     notes: String(p.notes ?? "").trim().slice(0, 2000) };
+}
+
+function optionalPositiveInteger(value: unknown, minimum: number, maximum: number, error: string) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) throw new Error(error);
+  return number;
+}
+
+function optionalYearOrDate(value: unknown, error: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (/^\d{4}$/.test(text)) { const year=Number(text);if(year>=1950&&year<=2100)return text;throw new Error(error); }
+  return optionalDate(text,error);
 }
 
 function optionalText(value: unknown, max: number) {

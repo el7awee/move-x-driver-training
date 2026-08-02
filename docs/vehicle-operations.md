@@ -13,4 +13,18 @@ The dedicated `/admin/settings/drivers` page creates the identity account and dr
 
 Only an active `manual_admin` driver can be authorized, and only an active `manual_admin` vehicle can be assigned or handed over. Maintenance, inactive, and retired vehicles cannot be handed over. Ending an authorization is blocked while that driver has the vehicle in custody.
 
+## Vehicle registration profile and images
+
+The administrator vehicle form mirrors the operational fields found on Egyptian vehicle registration licences without attempting OCR or trusting an uploaded image as structured data. In addition to the existing plate, make, model, year, colour, VIN/chassis, engine number, fuel, odometer, vehicle type, registration expiry, insurance company and insurance expiry fields, it stores:
+
+- owner name, traffic department, and traffic unit;
+- licence issue, registration expiry, tax expiry, and technical-inspection expiry dates;
+- insurance policy number;
+- engine capacity in cubic centimetres and cylinder count;
+- legal restrictions or sale-prohibition notes.
+
+Licence images are separate private documents in `vehicle_documents`. D1 stores metadata only; image/PDF bytes use the same private Google Drive service-account adapter as driver documents. Only a system administrator can list, upload, review, view, or archive them. Accepted content is JPEG, PNG, WEBP, or PDF up to 8 MiB, validated by file signature rather than filename. SVG, HTML, executable content, and MIME mismatches are rejected. The original registration files supplied for field discovery are never committed or imported automatically.
+
+When the three document-storage secrets are absent, structured vehicle data remains fully usable and the interface shows an explicit setup blocker instead of a nonfunctional upload button.
+
 Production migration remains a separately approved operation. Applying these migrations or deploying code is not part of PR review.

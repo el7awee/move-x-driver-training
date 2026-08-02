@@ -1,4 +1,4 @@
-import { DRIVER_DOCUMENT_TYPES, type DriverDocumentType } from "./core.ts";
+import { DRIVER_DOCUMENT_TYPES, VEHICLE_DOCUMENT_TYPES, type DriverDocumentType, type VehicleDocumentType } from "./core.ts";
 
 export const MAX_DRIVER_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -16,6 +16,14 @@ export interface ValidatedDriverDocument {
   documentType: DriverDocumentType;
 }
 
+export interface ValidatedVehicleDocument {
+  bytes: Uint8Array;
+  mimeType: keyof typeof MIME_EXTENSIONS;
+  extension: string;
+  originalFilename: string;
+  documentType: VehicleDocumentType;
+}
+
 export function detectDocumentMime(bytes: Uint8Array) {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   if (bytes.length >= 8 && [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a].every((byte,index)=>bytes[index]===byte)) return "image/png";
@@ -26,11 +34,21 @@ export function detectDocumentMime(bytes: Uint8Array) {
 
 export function validateDocumentBytes(bytes: Uint8Array, originalFilename: string, claimedMimeType: string, documentType: string): ValidatedDriverDocument {
   if (!DRIVER_DOCUMENT_TYPES.includes(documentType as DriverDocumentType)) throw new Error("invalid_document_type");
+  return { ...validateAllowedDocumentBytes(bytes, originalFilename, claimedMimeType), documentType: documentType as DriverDocumentType };
+}
+
+export function validateVehicleDocumentBytes(bytes: Uint8Array, originalFilename: string, claimedMimeType: string, documentType: string): ValidatedVehicleDocument {
+  if (!VEHICLE_DOCUMENT_TYPES.includes(documentType as VehicleDocumentType)) throw new Error("invalid_document_type");
+  const validated = validateAllowedDocumentBytes(bytes, originalFilename, claimedMimeType);
+  return { ...validated, documentType: documentType as VehicleDocumentType };
+}
+
+function validateAllowedDocumentBytes(bytes: Uint8Array, originalFilename: string, claimedMimeType: string) {
   if (!bytes.length || bytes.length > MAX_DRIVER_DOCUMENT_BYTES) throw new Error("invalid_document_size");
   const detected = detectDocumentMime(bytes);
   if (!detected || !(detected in MIME_EXTENSIONS) || detected !== claimedMimeType.toLowerCase()) throw new Error("invalid_document_mime");
   const cleanName = originalFilename.replaceAll(/[\u0000-\u001f<>:"/\\|?*]/g, "_").trim().slice(0, 180) || `document.${MIME_EXTENSIONS[detected]}`;
-  return { bytes, mimeType: detected, extension: MIME_EXTENSIONS[detected], originalFilename: cleanName, documentType: documentType as DriverDocumentType };
+  return { bytes, mimeType: detected, extension: MIME_EXTENSIONS[detected], originalFilename: cleanName };
 }
 
 export function canDownloadDriverDocument(role: string, requesterUserId: number, ownerUserId: number) {
@@ -82,9 +100,9 @@ export class GoogleDriveDocumentStorage {
   private readonly env: Required<GoogleDriveDocumentEnv>;
   constructor(env: Required<GoogleDriveDocumentEnv>) { this.env = env; }
 
-  async upload(document: ValidatedDriverDocument) {
+  async upload(document: ValidatedDriverDocument | ValidatedVehicleDocument, category = "driver-document") {
     const token=await googleAccessToken(this.env);const boundary=`movex_${crypto.randomUUID()}`;const storedName=randomStorageName(document.extension);
-    const metadata=JSON.stringify({name:storedName,parents:[this.env.DRIVER_DOCUMENTS_GOOGLE_DRIVE_FOLDER_ID],appProperties:{system:"move-x",category:"driver-document"}});
+    const metadata=JSON.stringify({name:storedName,parents:[this.env.DRIVER_DOCUMENTS_GOOGLE_DRIVE_FOLDER_ID],appProperties:{system:"move-x",category}});
     const head=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${document.mimeType}\r\n\r\n`;
     const tail=`\r\n--${boundary}--`;const first=new TextEncoder().encode(head);const last=new TextEncoder().encode(tail);const body=new Uint8Array(first.length+document.bytes.length+last.length);body.set(first);body.set(document.bytes,first.length);body.set(last,first.length+document.bytes.length);
     const response=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},body});

@@ -192,9 +192,19 @@ export const vehicles = sqliteTable("vehicles", {
   currentOdometer: real("current_odometer"),
   vehicleLicenseNumber: text("vehicle_license_number"),
   vehicleType: text("vehicle_type"),
+  ownerName: text("owner_name"),
+  trafficDepartment: text("traffic_department"),
+  trafficUnit: text("traffic_unit"),
+  licenseIssueDate: text("license_issue_date"),
   registrationExpiresAt: text("registration_expires_at"),
+  taxExpiresAt: text("tax_expires_at"),
+  technicalInspectionDue: text("technical_inspection_due"),
+  insurancePolicyNumber: text("insurance_policy_number"),
   insuranceExpiresAt: text("insurance_expires_at"),
   insuranceCompany: text("insurance_company"),
+  engineCapacityCc: integer("engine_capacity_cc"),
+  cylinderCount: integer("cylinder_count"),
+  legalRestrictions: text("legal_restrictions"),
   location: text("location"),
   source: text("source", { enum: ["manual_admin", "legacy_unverified"] }).notNull().default("legacy_unverified"),
   status: text("status", { enum: ["active", "maintenance", "inactive", "retired"] }).notNull().default("active"),
@@ -224,6 +234,28 @@ export const vehicleAssignments = sqliteTable("vehicle_assignments", {
   uniqueIndex("vehicle_assignments_active_pair_unique").on(table.vehicleId, table.driverUserId).where(sql`${table.status} = 'active'`),
   index("vehicle_assignments_driver_history_idx").on(table.driverUserId, table.assignedAt),
   index("vehicle_assignments_vehicle_history_idx").on(table.vehicleId, table.assignedAt),
+]);
+
+export const vehicleDocuments = sqliteTable("vehicle_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  vehicleId: integer("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  documentType: text("document_type", { enum: ["vehicle_license_front", "vehicle_license_back"] }).notNull(),
+  originalFilename: text("original_filename").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  storageProvider: text("storage_provider", { enum: ["google_drive", "r2"] }).notNull(),
+  storageFileId: text("storage_file_id"),
+  storageKey: text("storage_key"),
+  verificationStatus: text("verification_status", { enum: ["pending", "verified", "rejected"] }).notNull().default("pending"),
+  verifiedBy: integer("verified_by").references(() => users.id),
+  verifiedAt: text("verified_at"),
+  rejectionReason: text("rejection_reason"),
+  uploadedBy: integer("uploaded_by").notNull().references(() => users.id),
+  uploadedAt: text("uploaded_at").notNull().default(currentIsoTimestamp),
+  archivedAt: text("archived_at"),
+}, (table) => [
+  index("vehicle_documents_vehicle_idx").on(table.vehicleId, table.archivedAt, table.documentType),
+  uniqueIndex("vehicle_documents_storage_file_unique").on(table.storageProvider, table.storageFileId),
 ]);
 
 export const vehicleCustodies = sqliteTable("vehicle_custodies", {
